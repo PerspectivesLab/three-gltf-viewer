@@ -43,21 +43,34 @@ document.addEventListener('DOMContentLoaded', () => {
   dropCtrl.on('droperror', () => (spinnerEl.style.display = 'none'));
 
   const validationCtrl = new ValidationController(document.body);
+    
+    
+    
+
+    
 
   function view (rootFile, rootPath, fileMap) {
+      
+      
+   
+       
     if (!viewer) {
       viewerEl = document.createElement('div');
       viewerEl.classList.add('viewer');
-      dropEl.innerHTML = '';
+      //dropEl.innerHTML = '';
+        
+        //upload-btn
       dropEl.appendChild(viewerEl);
+        
+        
+        
+        
       viewer = new Viewer(viewerEl, {kiosk: !!hash.kiosk});
     } else {
-      viewer.clear();
-    }
+     //viewer.clear();
+    } 
 
-    const fileURL = typeof rootFile === 'string'
-      ? rootFile
-      : URL.createObjectURL(rootFile);
+    const fileURL = typeof rootFile === 'string' ? rootFile : URL.createObjectURL(rootFile);
 
     const cleanup = () => {
       spinnerEl.style.display = 'none';
@@ -71,23 +84,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     spinnerEl.style.display = '';
-    viewer.load(fileURL, rootPath, fileMap)
-      .then(cleanup)
-      .catch((error) => {
+      
+    console.log( "LOAD ====> " + fileURL ) 
+      
+       console.log(  fileMap ) 
+      
+    viewer.load(fileURL, rootPath, fileMap).then(cleanup).catch((error) => {
+        
+        
         if (error && error.target && error.target instanceof Image) {
-          error = 'Missing texture: ' + error.target.src.split('/').pop();
+            error = 'Missing texture: ' + error.target.src.split('/').pop();
         }
         window.alert((error||{}).message || error);
         console.error(error);
         cleanup();
-      });
+    });
 
     if (fileMap.size) {
-      files = fileMap;
-      rootName = rootFile.name.match(/([^\/]+)\.(gltf|glb)$/)[1];
-      // downloadBtnEl.style.display = null;
+        files = fileMap;
+        rootName = rootFile.name.match(/([^\/]+)\.(gltf|glb)$/)[1];
+        // downloadBtnEl.style.display = null;
     }
   }
+    
+    
+    
 
   if (hash.kiosk) {
     const headerEl = document.querySelector('header');

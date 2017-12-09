@@ -32,8 +32,12 @@ body {
 }
 
 .placeholder {
-  width: 100%;
-  max-width: 500px;
+display:none;
+position:absolute;
+left:0;
+top: 0;
+width: 150px;
+ z-index: 3000;
   border-radius: 0.5em;
   background: #EEE;
   padding: 2em;
@@ -41,7 +45,7 @@ body {
 }
 
 .placeholder p {
-  font-size: 1.2rem;
+  font-size: 10px;
   color: #999;
 }
 
@@ -161,7 +165,11 @@ header h1 + .separator {
  */
 
 .upload-btn {
-  margin-top: 2em;
+  margin-top: 0px;
+    top:10px;
+    z-index: 3000;
+    position:absolute;
+    left:10px;
 }
 
 .upload-btn input {

@@ -131,20 +131,28 @@ module.exports = class Viewer {
   }
 
   load ( url, rootPath, assetMap ) {
+      
+      
+      
+      
 
     const baseURL = THREE.Loader.prototype.extractUrlBase(url);
 
     // Load.
     return new Promise((resolve, reject) => {
+        
+        
+        
+        
+        
+        
 
       const manager = new THREE.LoadingManager();
 
       // Intercept and override relative URLs.
       manager.setURLModifier((url, path) => {
 
-        const normalizedURL = rootPath + url
-          .replace(baseURL, '')
-          .replace(/^(\.?\/)/, '');
+        const normalizedURL = rootPath + url.replace(baseURL, '').replace(/^(\.?\/)/, '');
 
         if (assetMap.has(normalizedURL)) {
           const blob = assetMap.get(normalizedURL);
@@ -157,25 +165,101 @@ module.exports = class Viewer {
 
       });
 
+        
+        
+        
       const loader = new THREE.GLTFLoader(manager);
       loader.setCrossOrigin('anonymous');
       const blobURLs = [];
+        
+        
+        
 
       loader.load(url, (gltf) => {
+          
+          
+          console.log( gltf.scene  );
 
         const scene = gltf.scene || gltf.scenes[0];
         const clips = gltf.animations || [];
-        this.setContent(scene, clips);
+        // this.setContent(scene, clips);
 
+          
+        this.addContent(scene, clips);  
+          
         blobURLs.forEach(URL.revokeObjectURL);
 
         resolve();
 
       }, undefined, reject);
+        
+        
+        
+        
+        
 
-    });
+    });//promise
 
   }
+    
+    
+    addContent ( object, clips ) { 
+    
+
+        object.updateMatrixWorld();
+        const box = new THREE.Box3().setFromObject(object);
+        const size = box.getSize().length();
+        const center = box.getCenter();
+
+        this.controls.reset();
+
+        /*
+        object.position.x += (object.position.x - center.x);
+        object.position.y += (object.position.y - center.y);
+        object.position.z += (object.position.z - center.z);*/
+        this.controls.maxDistance = size * 10;
+        this.defaultCamera.position.copy(center);
+        this.defaultCamera.position.x += size / 2.0;
+        this.defaultCamera.position.y += size / 5.0;
+        this.defaultCamera.position.z += size / 2.0;
+        this.defaultCamera.near = size / 100;
+        this.defaultCamera.far = size * 100;
+        this.defaultCamera.updateProjectionMatrix();
+        this.defaultCamera.lookAt(center);
+
+        this.setCamera(DEFAULT_CAMERA);
+
+        this.controls.saveState();
+
+        this.scene.add(object);
+        this.content = object;
+
+
+        // remove lights if provided in scene
+       /*this.state.addLights = true;
+        this.content.traverse((node) => {
+          if (node.isLight) {
+            this.state.addLights = false;
+          }
+        });*/
+
+        this.setClips(clips);
+
+        //this.updateLights();
+        this.updateGUI();
+        this.updateEnvironment();
+        this.updateTextureEncoding();
+        this.updateDisplay();
+
+        window.content = this.content;
+        console.info('[glTF Viewer] THREE.Scene exported as `window.content`.');
+        this.printGraph(this.content);
+    
+    }
+    
+    
+    
+     
 
   /**
    * @param {THREE.Object3D} object
@@ -409,7 +493,7 @@ module.exports = class Viewer {
   updateEnvironment () {
 	  
 	  
-	  return;
+	//  return;
 
     const environment = environments.filter((entry) => entry.name === this.state.environment)[0];
     const {path, format} = environment;
