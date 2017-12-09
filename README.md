@@ -1,3 +1,10 @@
+1/ npm install
+2/ npm run-script build
+
+place this repository in wamp folder, and build
+
+
+
 # glTF Viewer
 
 Preview glTF 2.0 models in WebGL using three.js and a drag-and-drop interface.
