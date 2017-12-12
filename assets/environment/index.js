@@ -4,6 +4,11 @@ module.exports = [
     path: null,
     format: '.jpg'
   },
+   {
+    name: 'White',
+    path: 'assets/environment/White/',
+    format: '.jpg'
+  }, 
   {
     name: 'Park (Day)',
     path: 'assets/environment/Park2/',

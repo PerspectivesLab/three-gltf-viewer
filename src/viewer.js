@@ -131,22 +131,12 @@ module.exports = class Viewer {
   }
 
   load ( url, rootPath, assetMap ) {
-      
-      
-      
-      
-
+ 
     const baseURL = THREE.Loader.prototype.extractUrlBase(url);
 
     // Load.
     return new Promise((resolve, reject) => {
-        
-        
-        
-        
-        
-        
-
+  
       const manager = new THREE.LoadingManager();
 
       // Intercept and override relative URLs.
@@ -612,9 +602,22 @@ module.exports = class Viewer {
     const gridCtrl = dispFolder.add(this.state, 'grid');
     gridCtrl.onChange(() => this.updateDisplay());
     dispFolder.add(this.controls, 'autoRotate');
+	
+	
+	
+
+
+
+
 
     // AMBIENT Lighting controls.
     const lightFolder = gui.addFolder('Ambient Lighting');
+	
+	
+	
+	 const envMapCtrl = lightFolder.add(this.state, 'environment', environments.map((env) => env.name));
+envMapCtrl.onChange(() => this.updateEnvironment());	
+	
  
 	// ambient light color
 	var params = {color: "#" + this.mAmbientLight.color.getHexString()  };
