@@ -4,13 +4,8 @@ module.exports = [
     path: null,
     format: '.jpg'
   },
-   {
-    name: 'White',
-    path: 'assets/environment/White/',
-    format: '.jpg'
-  }, 
-   {
-    name: 'Perspectives 1',
+  {
+    name: 'Nx-HostelRoom',
     path: 'assets/environment/Selim00/',
     format: '.png'
   }, 
@@ -37,6 +32,11 @@ module.exports = [
   {
     name: 'Castle',
     path: 'assets/environment/SwedishRoyalCastle/',
+    format: '.jpg'
+  },
+  {
+    name: 'White',
+    path: 'assets/environment/White/',
     format: '.jpg'
   }
 ];

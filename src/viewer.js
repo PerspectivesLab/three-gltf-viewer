@@ -70,11 +70,11 @@ module.exports = class Viewer {
     this.controls.autoRotate = false;
     this.controls.autoRotateSpeed = -10;
 
-    this.background = createVignetteBackground({
-      aspect: this.defaultCamera.aspect,
-      grainScale: IS_IOS ? 0 : 0.001, // mattdesl/three-vignette-background#1
-      colors: ['#ffffff', '#353535']
-    });
+    // this.background = createVignetteBackground({
+    //   aspect: this.defaultCamera.aspect,
+    //   grainScale: IS_IOS ? 0 : 0.001, // mattdesl/three-vignette-background#1
+    //   colors: ['#ffffff', '#353535']
+    // });
 
     this.el.appendChild(this.renderer.domElement);
 
@@ -361,7 +361,7 @@ module.exports = class Viewer {
     const encoding = this.state.textureEncoding === 'sRGB'
       ? THREE.sRGBEncoding
       : THREE.LinearEncoding;
-    this.content.traverse((node) => {
+    this.scene.traverse((node) => {
       if (node.isMesh) {
         const material = node.material;
         if (material.map) material.map.encoding = encoding;
@@ -396,12 +396,10 @@ module.exports = class Viewer {
   
   createAmbientLight() { 
   
-		this.mAmbientLight = new THREE.AmbientLight(0xFFFFFF , 0.25 ); // color intensity 
-        this.scene.add( this.mAmbientLight );    
+		this.mAmbientLight = new THREE.AmbientLight(0xFFFFFF , 0.4); // color intensity 
+        this.scene.add( this.mAmbientLight );
 
-        
-
-        this.mHemisphereLight  = new THREE.HemisphereLight( 0xEEEEEC, 0x000023, 0.8 ); // skyColor, groundColor, intensity
+        this.mHemisphereLight = new THREE.HemisphereLight( 0xEEEEEA, 0x000023, 0.9 ); // skyColor, groundColor, intensity
 
 
         // this.mLight.color.setHSL( 0.0, 0.0, 1.0 );
@@ -431,7 +429,7 @@ module.exports = class Viewer {
         
         var distance =  0; // 0: infinite 
         // this.mLight = new THREE.DirectionalLight( 0xffffff, 0.95 ) ;//new THREE.SpotLight( 0xffffff, 1, distance, Math.PI /4  );
-        this.mDirectionalLight = new THREE.DirectionalLight( 0xffffff, 0.4 ) ;
+        this.mDirectionalLight = new THREE.DirectionalLight( 0xffffff, 0.0 ) ;
         this.mDirectionalLight.position.set( -2500, 3000, 2500 );
         this.mDirectionalLight.target.position.set( 0, 200, 0 );
         // this.mLight.castShadow = true;
@@ -504,10 +502,13 @@ module.exports = class Viewer {
       this.scene.remove(this.background);
     }
 
-    this.content.traverse((node) => {
+    this.scene.traverse((node) => {
       if (node.material && 'envMap' in node.material) {
         node.material.envMap = envMap;
         node.material.needsUpdate = true;
+      }
+      else {
+        console.log(node);
       }
     });
 
@@ -520,7 +521,7 @@ module.exports = class Viewer {
       this.skeletonHelpers.forEach((helper) => this.scene.remove(helper));
     }
 
-    this.content.traverse((node) => {
+    this.scene.traverse((node) => {
       if (node.isMesh) {
         node.material.wireframe = this.state.wireframe;
       }
