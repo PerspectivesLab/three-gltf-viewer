@@ -1,4 +1,4 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function(){function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s}return e})()({1:[function(require,module,exports){
 module.exports = [
   {
     name: 'None',
@@ -123,6 +123,1380 @@ if ( typeof module === 'object' ) {
 }
 
 },{}],3:[function(require,module,exports){
+/**
+ * @author fernandojsg / http://fernandojsg.com
+ */
+
+//------------------------------------------------------------------------------
+// Constants
+//------------------------------------------------------------------------------
+var WEBGL_CONSTANTS = {
+	POINTS: 0x0000,
+	LINES: 0x0001,
+	LINE_LOOP: 0x0002,
+	LINE_STRIP: 0x0003,
+	TRIANGLES: 0x0004,
+	TRIANGLE_STRIP: 0x0005,
+	TRIANGLE_FAN: 0x0006,
+
+	UNSIGNED_BYTE: 0x1401,
+	UNSIGNED_SHORT: 0x1403,
+	FLOAT: 0x1406,
+	UNSIGNED_INT: 0x1405,
+	ARRAY_BUFFER: 0x8892,
+	ELEMENT_ARRAY_BUFFER: 0x8893,
+
+	NEAREST: 0x2600,
+	LINEAR: 0x2601,
+	NEAREST_MIPMAP_NEAREST: 0x2700,
+	LINEAR_MIPMAP_NEAREST: 0x2701,
+	NEAREST_MIPMAP_LINEAR: 0x2702,
+	LINEAR_MIPMAP_LINEAR: 0x2703
+};
+
+var THREE_TO_WEBGL = {
+	// @TODO Replace with computed property name [THREE.*] when available on es6
+	1003: WEBGL_CONSTANTS.NEAREST,
+	1004: WEBGL_CONSTANTS.NEAREST_MIPMAP_NEAREST,
+	1005: WEBGL_CONSTANTS.NEAREST_MIPMAP_LINEAR,
+	1006: WEBGL_CONSTANTS.LINEAR,
+	1007: WEBGL_CONSTANTS.LINEAR_MIPMAP_NEAREST,
+	1008: WEBGL_CONSTANTS.LINEAR_MIPMAP_LINEAR
+};
+
+var PATH_PROPERTIES = {
+	scale: 'scale',
+	position: 'translation',
+	quaternion: 'rotation',
+	morphTargetInfluences: 'weights'
+};
+
+//------------------------------------------------------------------------------
+// GLTF Exporter
+//------------------------------------------------------------------------------
+THREE.GLTFExporter = function () {};
+
+THREE.GLTFExporter.prototype = {
+
+	constructor: THREE.GLTFExporter,
+
+	/**
+	 * Parse scenes and generate GLTF output
+	 * @param  {THREE.Scene or [THREE.Scenes]} input   THREE.Scene or Array of THREE.Scenes
+	 * @param  {Function} onDone  Callback on completed
+	 * @param  {Object} options options
+	 */
+	parse: function ( input, onDone, options ) {
+
+		var DEFAULT_OPTIONS = {
+			trs: false,
+			onlyVisible: true,
+			truncateDrawRange: true,
+			embedImages: true,
+			animations: []
+		};
+
+		options = Object.assign( {}, DEFAULT_OPTIONS, options );
+
+		if ( options.animations.length > 0 ) {
+
+			// Only TRS properties, and not matrices, may be targeted by animation.
+			options.trs = true;
+
+		}
+
+		var outputJSON = {
+
+			asset: {
+
+				version: "2.0",
+				generator: "THREE.GLTFExporter"
+
+			}
+
+		};
+
+		var byteOffset = 0;
+		var dataViews = [];
+		var nodeMap = {};
+		var skins = [];
+		var cachedData = {
+
+			images: {},
+			materials: {}
+
+		};
+
+		var cachedCanvas;
+
+		/**
+		 * Compare two arrays
+		 */
+		/**
+		 * Compare two arrays
+		 * @param  {Array} array1 Array 1 to compare
+		 * @param  {Array} array2 Array 2 to compare
+		 * @return {Boolean}        Returns true if both arrays are equal
+		 */
+		function equalArray( array1, array2 ) {
+
+			return ( array1.length === array2.length ) && array1.every( function ( element, index ) {
+
+				return element === array2[ index ];
+
+			} );
+
+		}
+
+		/**
+		 * Converts a string to an ArrayBuffer.
+		 * @param  {string} text
+		 * @return {ArrayBuffer}
+		 */
+		function stringToArrayBuffer( text ) {
+
+			if ( window.TextEncoder !== undefined ) {
+
+				return new TextEncoder().encode( text ).buffer;
+
+			}
+
+			var buffer = new ArrayBuffer( text.length );
+
+			var bufferView = new Uint8Array( buffer );
+
+			for ( var i = 0; i < text.length; ++ i ) {
+
+				bufferView[ i ] = text.charCodeAt( i );
+
+			}
+
+			return buffer;
+
+		}
+
+		/**
+		 * Get the min and max vectors from the given attribute
+		 * @param  {THREE.BufferAttribute} attribute Attribute to find the min/max
+		 * @return {Object} Object containing the `min` and `max` values (As an array of attribute.itemSize components)
+		 */
+		function getMinMax( attribute ) {
+
+			var output = {
+
+				min: new Array( attribute.itemSize ).fill( Number.POSITIVE_INFINITY ),
+				max: new Array( attribute.itemSize ).fill( Number.NEGATIVE_INFINITY )
+
+			};
+
+			for ( var i = 0; i < attribute.count; i ++ ) {
+
+				for ( var a = 0; a < attribute.itemSize; a ++ ) {
+
+					var value = attribute.array[ i * attribute.itemSize + a ];
+					output.min[ a ] = Math.min( output.min[ a ], value );
+					output.max[ a ] = Math.max( output.max[ a ], value );
+
+				}
+
+			}
+
+			return output;
+
+		}
+
+		/**
+		 * Get the required size + padding for a buffer, rounded to the next 4-byte boundary.
+		 * https://github.com/KhronosGroup/glTF/tree/master/specification/2.0#data-alignment
+		 *
+		 * @param {Integer} bufferSize The size the original buffer.
+		 * @returns {Integer} new buffer size with required padding.
+		 *
+		 */
+		function getPaddedBufferSize( bufferSize ) {
+
+			return Math.ceil( bufferSize / 4 ) * 4;
+
+		}
+		
+		/**
+		 * Process a buffer to append to the default one.
+		 * @param  {THREE.BufferAttribute} attribute     Attribute to store
+		 * @param  {Integer} componentType Component type (Unsigned short, unsigned int or float)
+		 * @return {Integer}               Index of the buffer created (Currently always 0)
+		 */
+		function processBuffer( attribute, componentType, start, count ) {
+
+			if ( ! outputJSON.buffers ) {
+
+				outputJSON.buffers = [
+
+					{
+
+						byteLength: 0,
+						uri: ''
+
+					}
+
+				];
+
+			}
+
+			var offset = 0;
+			var componentSize = componentType === WEBGL_CONSTANTS.UNSIGNED_SHORT ? 2 : 4;
+
+			// Create a new dataview and dump the attribute's array into it
+			var byteLength = count * attribute.itemSize * componentSize;
+			
+			// adjust required size of array buffer with padding 
+			// to satisfy gltf requirement that the length is divisible by 4
+			byteLength = getPaddedBufferSize( byteLength );
+
+			var dataView = new DataView( new ArrayBuffer( byteLength ) );
+
+			for ( var i = start; i < start + count; i ++ ) {
+
+				for ( var a = 0; a < attribute.itemSize; a ++ ) {
+
+					var value = attribute.array[ i * attribute.itemSize + a ];
+
+					if ( componentType === WEBGL_CONSTANTS.FLOAT ) {
+
+						dataView.setFloat32( offset, value, true );
+
+					} else if ( componentType === WEBGL_CONSTANTS.UNSIGNED_INT ) {
+
+						dataView.setUint8( offset, value, true );
+
+					} else if ( componentType === WEBGL_CONSTANTS.UNSIGNED_SHORT ) {
+
+						dataView.setUint16( offset, value, true );
+
+					}
+
+					offset += componentSize;
+
+				}
+
+			}
+
+			// We just use one buffer
+			dataViews.push( dataView );
+
+			// Always using just one buffer
+			return 0;
+
+		}
+
+		/**
+		 * Process and generate a BufferView
+		 * @param  {THREE.BufferAttribute} data
+		 * @param  {number} componentType
+		 * @param  {number} start
+		 * @param  {number} count
+		 * @param  {number} target (Optional) Target usage of the BufferView
+		 * @return {Object}
+		 */
+		function processBufferView( data, componentType, start, count, target ) {
+
+			if ( ! outputJSON.bufferViews ) {
+
+				outputJSON.bufferViews = [];
+
+			}
+
+			var componentSize = componentType === WEBGL_CONSTANTS.UNSIGNED_SHORT ? 2 : 4;
+
+			// Create a new dataview and dump the attribute's array into it
+			var byteLength = count * data.itemSize * componentSize;
+
+			var gltfBufferView = {
+
+				buffer: processBuffer( data, componentType, start, count ),
+				byteOffset: byteOffset,
+				byteLength: byteLength
+
+			};
+
+			if ( target !== undefined ) gltfBufferView.target = target;
+
+			if ( target === WEBGL_CONSTANTS.ARRAY_BUFFER ) {
+
+				// Only define byteStride for vertex attributes.
+				gltfBufferView.byteStride = data.itemSize * componentSize;
+
+			}
+
+			byteOffset += byteLength;
+
+			outputJSON.bufferViews.push( gltfBufferView );
+
+			// @TODO Ideally we'll have just two bufferviews: 0 is for vertex attributes, 1 for indices
+			var output = {
+
+				id: outputJSON.bufferViews.length - 1,
+				byteLength: 0
+
+			};
+
+			return output;
+
+		}
+
+		/**
+		 * Process attribute to generate an accessor
+		 * @param  {THREE.BufferAttribute} attribute Attribute to process
+		 * @param  {THREE.BufferGeometry} geometry (Optional) Geometry used for truncated draw range
+		 * @return {Integer}           Index of the processed accessor on the "accessors" array
+		 */
+		function processAccessor( attribute, geometry ) {
+
+			if ( ! outputJSON.accessors ) {
+
+				outputJSON.accessors = [];
+
+			}
+
+			var types = {
+
+				1: 'SCALAR',
+				2: 'VEC2',
+				3: 'VEC3',
+				4: 'VEC4',
+				16: 'MAT4'
+
+			};
+
+			var componentType;
+
+			// Detect the component type of the attribute array (float, uint or ushort)
+			if ( attribute.array.constructor === Float32Array ) {
+
+				componentType = WEBGL_CONSTANTS.FLOAT;
+
+			} else if ( attribute.array.constructor === Uint32Array ) {
+
+				componentType = WEBGL_CONSTANTS.UNSIGNED_INT;
+
+			} else if ( attribute.array.constructor === Uint16Array ) {
+
+				componentType = WEBGL_CONSTANTS.UNSIGNED_SHORT;
+
+			} else {
+
+				throw new Error( 'THREE.GLTFExporter: Unsupported bufferAttribute component type.' );
+
+			}
+
+			var minMax = getMinMax( attribute );
+
+			var start = 0;
+			var count = attribute.count;
+
+			// @TODO Indexed buffer geometry with drawRange not supported yet
+			if ( options.truncateDrawRange && geometry !== undefined && geometry.index === null ) {
+
+				start = geometry.drawRange.start;
+				count = geometry.drawRange.count !== Infinity ? geometry.drawRange.count : attribute.count;
+
+			}
+
+			var bufferViewTarget;
+
+			// If geometry isn't provided, don't infer the target usage of the bufferView. For
+			// animation samplers, target must not be set.
+			if ( geometry !== undefined ) {
+
+				var isVertexAttributes = componentType === WEBGL_CONSTANTS.FLOAT;
+				bufferViewTarget = isVertexAttributes ? WEBGL_CONSTANTS.ARRAY_BUFFER : WEBGL_CONSTANTS.ELEMENT_ARRAY_BUFFER;
+
+			}
+
+			var bufferView = processBufferView( attribute, componentType, start, count, bufferViewTarget );
+
+			var gltfAccessor = {
+
+				bufferView: bufferView.id,
+				byteOffset: bufferView.byteOffset,
+				componentType: componentType,
+				count: count,
+				max: minMax.max,
+				min: minMax.min,
+				type: types[ attribute.itemSize ]
+
+			};
+
+			outputJSON.accessors.push( gltfAccessor );
+
+			return outputJSON.accessors.length - 1;
+
+		}
+
+		/**
+		 * Process image
+		 * @param  {Texture} map Texture to process
+		 * @return {Integer}     Index of the processed texture in the "images" array
+		 */
+		function processImage( map ) {
+
+			if ( cachedData.images[ map.uuid ] !== undefined ) {
+
+				return cachedData.images[ map.uuid ];
+
+			}
+
+			if ( ! outputJSON.images ) {
+
+				outputJSON.images = [];
+
+			}
+
+			var mimeType = map.format === THREE.RGBAFormat ? 'image/png' : 'image/jpeg';
+			var gltfImage = {mimeType: mimeType};
+
+			if ( options.embedImages ) {
+
+				var canvas = cachedCanvas = cachedCanvas || document.createElement( 'canvas' );
+				canvas.width = map.image.width;
+				canvas.height = map.image.height;
+				var ctx = canvas.getContext( '2d' );
+
+				if ( map.flipY === true ) {
+
+					ctx.translate( 0, map.image.height );
+					ctx.scale( 1, -1 );
+
+				}
+
+				ctx.drawImage( map.image, 0, 0 );
+
+				// @TODO Embed in { bufferView } if options.binary set.
+
+				gltfImage.uri = canvas.toDataURL( mimeType );
+
+			} else {
+
+				gltfImage.uri = map.image.src;
+
+			}
+
+			outputJSON.images.push( gltfImage );
+
+			var index = outputJSON.images.length - 1;
+			cachedData.images[ map.uuid ] = index;
+
+			return index;
+
+		}
+
+		/**
+		 * Process sampler
+		 * @param  {Texture} map Texture to process
+		 * @return {Integer}     Index of the processed texture in the "samplers" array
+		 */
+		function processSampler( map ) {
+
+			if ( ! outputJSON.samplers ) {
+
+				outputJSON.samplers = [];
+
+			}
+
+			var gltfSampler = {
+
+				magFilter: THREE_TO_WEBGL[ map.magFilter ],
+				minFilter: THREE_TO_WEBGL[ map.minFilter ],
+				wrapS: THREE_TO_WEBGL[ map.wrapS ],
+				wrapT: THREE_TO_WEBGL[ map.wrapT ]
+
+			};
+
+			outputJSON.samplers.push( gltfSampler );
+
+			return outputJSON.samplers.length - 1;
+
+		}
+
+		/**
+		 * Process texture
+		 * @param  {Texture} map Map to process
+		 * @return {Integer}     Index of the processed texture in the "textures" array
+		 */
+		function processTexture( map ) {
+
+			if ( ! outputJSON.textures ) {
+
+				outputJSON.textures = [];
+
+			}
+
+			var gltfTexture = {
+
+				sampler: processSampler( map ),
+				source: processImage( map )
+
+			};
+
+			outputJSON.textures.push( gltfTexture );
+
+			return outputJSON.textures.length - 1;
+
+		}
+
+		/**
+		 * Process material
+		 * @param  {THREE.Material} material Material to process
+		 * @return {Integer}      Index of the processed material in the "materials" array
+		 */
+		function processMaterial( material ) {
+
+			if ( cachedData.materials[ material.uuid ] !== undefined ) {
+
+				return cachedData.materials[ material.uuid ];
+
+			}
+
+			if ( ! outputJSON.materials ) {
+
+				outputJSON.materials = [];
+
+			}
+
+			if ( material instanceof THREE.ShaderMaterial ) {
+
+				console.warn( 'GLTFExporter: THREE.ShaderMaterial not supported.' );
+				return null;
+
+			}
+
+
+			if ( ! ( material instanceof THREE.MeshStandardMaterial ) ) {
+
+				console.warn( 'GLTFExporter: Currently just THREE.StandardMaterial is supported. Material conversion may lose information.' );
+
+			}
+
+			// @QUESTION Should we avoid including any attribute that has the default value?
+			var gltfMaterial = {
+
+				pbrMetallicRoughness: {}
+
+			};
+
+			// pbrMetallicRoughness.baseColorFactor
+			var color = material.color.toArray().concat( [ material.opacity ] );
+
+			if ( ! equalArray( color, [ 1, 1, 1, 1 ] ) ) {
+
+				gltfMaterial.pbrMetallicRoughness.baseColorFactor = color;
+
+			}
+
+			if ( material instanceof THREE.MeshStandardMaterial ) {
+
+				gltfMaterial.pbrMetallicRoughness.metallicFactor = material.metalness;
+				gltfMaterial.pbrMetallicRoughness.roughnessFactor = material.roughness;
+
+			} else {
+
+				gltfMaterial.pbrMetallicRoughness.metallicFactor = 0.5;
+				gltfMaterial.pbrMetallicRoughness.roughnessFactor = 0.5;
+
+			}
+
+			// pbrMetallicRoughness.baseColorTexture
+			if ( material.map ) {
+
+				gltfMaterial.pbrMetallicRoughness.baseColorTexture = {
+
+					index: processTexture( material.map )
+
+				};
+
+			}
+
+			if ( material instanceof THREE.MeshBasicMaterial ||
+				material instanceof THREE.LineBasicMaterial ||
+				material instanceof THREE.PointsMaterial ) {
+
+			} else {
+
+				// emissiveFactor
+				var emissive = material.emissive.clone().multiplyScalar( material.emissiveIntensity ).toArray();
+
+				if ( ! equalArray( emissive, [ 0, 0, 0 ] ) ) {
+
+					gltfMaterial.emissiveFactor = emissive;
+
+				}
+
+				// emissiveTexture
+				if ( material.emissiveMap ) {
+
+					gltfMaterial.emissiveTexture = {
+
+						index: processTexture( material.emissiveMap )
+
+					};
+
+				}
+
+			}
+
+			// normalTexture
+			if ( material.normalMap ) {
+
+				gltfMaterial.normalTexture = {
+
+					index: processTexture( material.normalMap )
+
+				};
+
+				if ( material.normalScale.x !== - 1 ) {
+
+					if ( material.normalScale.x !== material.normalScale.y ) {
+
+						console.warn( 'THREE.GLTFExporter: Normal scale components are different, ignoring Y and exporting X.' );
+
+					}
+
+					gltfMaterial.normalTexture.scale = material.normalScale.x;
+
+				}
+
+			}
+
+			// occlusionTexture
+			if ( material.aoMap ) {
+
+				gltfMaterial.occlusionTexture = {
+
+					index: processTexture( material.aoMap )
+
+				};
+
+				if ( material.aoMapIntensity !== 1.0 ) {
+
+					gltfMaterial.occlusionTexture.strength = material.aoMapIntensity;
+
+				}
+
+			}
+
+			// alphaMode
+			if ( material.transparent || material.alphaTest > 0.0 ) {
+
+				gltfMaterial.alphaMode = material.opacity < 1.0 ? 'BLEND' : 'MASK';
+
+				// Write alphaCutoff if it's non-zero and different from the default (0.5).
+				if ( material.alphaTest > 0.0 && material.alphaTest !== 0.5 ) {
+
+					gltfMaterial.alphaCutoff = material.alphaTest;
+
+				}
+
+			}
+
+			// doubleSided
+			if ( material.side === THREE.DoubleSide ) {
+
+				gltfMaterial.doubleSided = true;
+
+			}
+
+			if ( material.name ) {
+
+				gltfMaterial.name = material.name;
+
+			}
+
+			outputJSON.materials.push( gltfMaterial );
+
+			var index = outputJSON.materials.length - 1;
+			cachedData.materials[ material.uuid ] = index;
+
+			return index;
+
+		}
+
+		/**
+		 * Process mesh
+		 * @param  {THREE.Mesh} mesh Mesh to process
+		 * @return {Integer}      Index of the processed mesh in the "meshes" array
+		 */
+		function processMesh( mesh ) {
+
+			if ( ! outputJSON.meshes ) {
+
+				outputJSON.meshes = [];
+
+			}
+
+			var geometry = mesh.geometry;
+
+			var mode;
+
+			// Use the correct mode
+			if ( mesh instanceof THREE.LineSegments ) {
+
+				mode = WEBGL_CONSTANTS.LINES;
+
+			} else if ( mesh instanceof THREE.LineLoop ) {
+
+				mode = WEBGL_CONSTANTS.LINE_LOOP;
+
+			} else if ( mesh instanceof THREE.Line ) {
+
+				mode = WEBGL_CONSTANTS.LINE_STRIP;
+
+			} else if ( mesh instanceof THREE.Points ) {
+
+				mode = WEBGL_CONSTANTS.POINTS;
+
+			} else {
+
+				if ( ! geometry.isBufferGeometry ) {
+
+					var geometryTemp = new THREE.BufferGeometry();
+					geometryTemp.fromGeometry( geometry );
+					geometry = geometryTemp;
+
+				}
+
+				if ( mesh.drawMode === THREE.TriangleFanDrawMode ) {
+
+					console.warn( 'GLTFExporter: TriangleFanDrawMode and wireframe incompatible.' );
+					mode = WEBGL_CONSTANTS.TRIANGLE_FAN;
+
+				} else if ( mesh.drawMode === THREE.TriangleStripDrawMode ) {
+
+					mode = mesh.material.wireframe ? WEBGL_CONSTANTS.LINE_STRIP : WEBGL_CONSTANTS.TRIANGLE_STRIP;
+
+				} else {
+
+					mode = mesh.material.wireframe ? WEBGL_CONSTANTS.LINES : WEBGL_CONSTANTS.TRIANGLES;
+
+				}
+
+			}
+
+			var gltfMesh = {
+				primitives: [
+					{
+						mode: mode,
+						attributes: {},
+					}
+				]
+			};
+
+			var material = processMaterial( mesh.material );
+			if ( material !== null ) {
+
+				gltfMesh.primitives[ 0 ].material = material;
+
+			}
+
+
+			if ( geometry.index ) {
+
+				gltfMesh.primitives[ 0 ].indices = processAccessor( geometry.index, geometry );
+
+			}
+
+			// We've just one primitive per mesh
+			var gltfAttributes = gltfMesh.primitives[ 0 ].attributes;
+
+			// Conversion between attributes names in threejs and gltf spec
+			var nameConversion = {
+
+				uv: 'TEXCOORD_0',
+				uv2: 'TEXCOORD_1',
+				color: 'COLOR_0',
+				skinWeight: 'WEIGHTS_0',
+				skinIndex: 'JOINTS_0'
+
+			};
+
+			// @QUESTION Detect if .vertexColors = THREE.VertexColors?
+			// For every attribute create an accessor
+			for ( var attributeName in geometry.attributes ) {
+
+				var attribute = geometry.attributes[ attributeName ];
+				attributeName = nameConversion[ attributeName ] || attributeName.toUpperCase();
+
+				if ( attributeName.substr( 0, 5 ) !== 'MORPH' ) {
+
+					gltfAttributes[ attributeName ] = processAccessor( attribute, geometry );
+
+				}
+
+			}
+
+			// Morph targets
+			if ( mesh.morphTargetInfluences !== undefined && mesh.morphTargetInfluences.length > 0 ) {
+
+				var weights = [];
+				gltfMesh.primitives[ 0 ].targets = [];
+
+				for ( var i = 0; i < mesh.morphTargetInfluences.length; ++ i ) {
+
+					var target = {};
+
+					for ( var attributeName in geometry.morphAttributes ) {
+
+						var attribute = geometry.morphAttributes[ attributeName ][ i ];
+						attributeName = nameConversion[ attributeName ] || attributeName.toUpperCase();
+						target[ attributeName ] = processAccessor( attribute, geometry );
+
+					}
+
+					gltfMesh.primitives[ 0 ].targets.push( target );
+
+					weights.push( mesh.morphTargetInfluences[ i ] );
+
+				}
+
+				gltfMesh.weights = weights;
+
+			}
+
+			outputJSON.meshes.push( gltfMesh );
+
+			return outputJSON.meshes.length - 1;
+
+		}
+
+		/**
+		 * Process camera
+		 * @param  {THREE.Camera} camera Camera to process
+		 * @return {Integer}      Index of the processed mesh in the "camera" array
+		 */
+		function processCamera( camera ) {
+
+			if ( ! outputJSON.cameras ) {
+
+				outputJSON.cameras = [];
+
+			}
+
+			var isOrtho = camera instanceof THREE.OrthographicCamera;
+
+			var gltfCamera = {
+
+				type: isOrtho ? 'orthographic' : 'perspective'
+
+			};
+
+			if ( isOrtho ) {
+
+				gltfCamera.orthographic = {
+
+					xmag: camera.right * 2,
+					ymag: camera.top * 2,
+					zfar: camera.far,
+					znear: camera.near
+
+				};
+
+			} else {
+
+				gltfCamera.perspective = {
+
+					aspectRatio: camera.aspect,
+					yfov: THREE.Math.degToRad( camera.fov ) / camera.aspect,
+					zfar: camera.far,
+					znear: camera.near
+
+				};
+
+			}
+
+			if ( camera.name ) {
+
+				gltfCamera.name = camera.type;
+
+			}
+
+			outputJSON.cameras.push( gltfCamera );
+
+			return outputJSON.cameras.length - 1;
+
+		}
+
+		/**
+		 * Creates glTF animation entry from AnimationClip object.
+		 *
+		 * Status:
+		 * - Only properties listed in PATH_PROPERTIES may be animated.
+		 * - Only LINEAR and STEP interpolation currently supported.
+		 *
+		 * @param {THREE.AnimationClip} clip
+		 * @param {THREE.Object3D} root
+		 * @return {number}
+		 */
+		function processAnimation ( clip, root ) {
+
+			if ( ! outputJSON.animations ) {
+
+				outputJSON.animations = [];
+
+			}
+
+			var channels = [];
+			var samplers = [];
+
+			for ( var i = 0; i < clip.tracks.length; ++ i ) {
+
+				var track = clip.tracks[ i ];
+				var trackBinding = THREE.PropertyBinding.parseTrackName( track.name );
+				var trackNode = THREE.PropertyBinding.findNode( root, trackBinding.nodeName );
+				var trackProperty = PATH_PROPERTIES[ trackBinding.propertyName ];
+
+				if ( trackBinding.objectName === 'bones' ) {
+
+					if ( trackNode.isSkinnedMesh === true ) {
+
+						trackNode = trackNode.skeleton.getBoneByName( trackBinding.objectIndex );
+
+					} else {
+
+						trackNode = undefined;
+
+					}
+
+				}
+
+				if ( ! trackNode || ! trackProperty ) {
+
+					console.warn( 'THREE.GLTFExporter: Could not export animation track "%s".', track.name );
+					return null;
+
+				}
+
+				var inputItemSize = 1;
+				var outputItemSize = track.values.length / track.times.length;
+
+				if ( trackProperty === PATH_PROPERTIES.morphTargetInfluences ) {
+
+					outputItemSize /= trackNode.morphTargetInfluences.length;
+
+				}
+
+				samplers.push( {
+
+					input: processAccessor( new THREE.BufferAttribute( track.times, inputItemSize ) ),
+					output: processAccessor( new THREE.BufferAttribute( track.values, outputItemSize ) ),
+					interpolation: track.getInterpolation() === THREE.InterpolateDiscrete ? 'STEP' : 'LINEAR'
+
+				} );
+
+				channels.push( {
+
+					sampler: samplers.length - 1,
+					target: {
+						node: nodeMap[ trackNode.uuid ],
+						path: trackProperty
+					}
+
+				} );
+
+			}
+
+			outputJSON.animations.push( {
+
+				name: clip.name || 'clip_' + outputJSON.animations.length,
+				samplers: samplers,
+				channels: channels
+
+			} );
+
+			return outputJSON.animations.length - 1;
+
+		}
+
+		function processSkin( object ) {
+
+			var node = outputJSON.nodes[ nodeMap[ object.uuid ] ];
+
+			var skeleton = object.skeleton;
+			var rootJoint = object.skeleton.bones[ 0 ];
+
+			if ( rootJoint === undefined ) return null;
+
+			var joints = [];
+			var inverseBindMatrices = new Float32Array( skeleton.bones.length * 16 );
+
+			for ( var i = 0; i < skeleton.bones.length; ++ i ) {
+
+				joints.push( nodeMap[ skeleton.bones[ i ].uuid ] );
+
+				skeleton.boneInverses[ i ].toArray( inverseBindMatrices, i * 16 );
+
+			}
+
+			if ( outputJSON.skins === undefined ) {
+
+				outputJSON.skins = [];
+
+			}
+
+			outputJSON.skins.push( {
+
+				inverseBindMatrices: processAccessor( new THREE.BufferAttribute( inverseBindMatrices, 16 ) ),
+				joints: joints,
+				skeleton: nodeMap[ rootJoint.uuid ]
+
+			} );
+
+			var skinIndex = node.skin = outputJSON.skins.length - 1;
+
+			return skinIndex;
+
+		}
+
+		/**
+		 * Process Object3D node
+		 * @param  {THREE.Object3D} node Object3D to processNode
+		 * @return {Integer}      Index of the node in the nodes list
+		 */
+		function processNode( object ) {
+
+			if ( object instanceof THREE.Light ) {
+
+				console.warn( 'GLTFExporter: Unsupported node type:', object.constructor.name );
+				return null;
+
+			}
+
+			if ( ! outputJSON.nodes ) {
+
+				outputJSON.nodes = [];
+
+			}
+
+			var gltfNode = {};
+
+			if ( options.trs ) {
+
+				var rotation = object.quaternion.toArray();
+				var position = object.position.toArray();
+				var scale = object.scale.toArray();
+
+				if ( ! equalArray( rotation, [ 0, 0, 0, 1 ] ) ) {
+
+					gltfNode.rotation = rotation;
+
+				}
+
+				if ( ! equalArray( position, [ 0, 0, 0 ] ) ) {
+
+					gltfNode.translation = position;
+
+				}
+
+				if ( ! equalArray( scale, [ 1, 1, 1 ] ) ) {
+
+					gltfNode.scale = scale;
+
+				}
+
+			} else {
+
+				object.updateMatrix();
+				if ( ! equalArray( object.matrix.elements, [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] ) ) {
+
+					gltfNode.matrix = object.matrix.elements;
+
+				}
+
+			}
+
+			if ( object.name ) {
+
+				gltfNode.name = String( object.name );
+
+			}
+
+			if ( object.userData && Object.keys( object.userData ).length > 0 ) {
+
+				try {
+
+					gltfNode.extras = JSON.parse( JSON.stringify( object.userData ) );
+
+				} catch ( e ) {
+
+					throw new Error( 'THREE.GLTFExporter: userData can\'t be serialized' );
+
+				}
+
+			}
+
+			if ( object instanceof THREE.Mesh ||
+				object instanceof THREE.Line ||
+				object instanceof THREE.Points ) {
+
+				gltfNode.mesh = processMesh( object );
+
+			} else if ( object instanceof THREE.Camera ) {
+
+				gltfNode.camera = processCamera( object );
+
+			}
+
+			if ( object instanceof THREE.SkinnedMesh ) {
+
+				skins.push( object );
+
+			}
+
+			if ( object.children.length > 0 ) {
+
+				var children = [];
+
+				for ( var i = 0, l = object.children.length; i < l; i ++ ) {
+
+					var child = object.children[ i ];
+
+					if ( child.visible || options.onlyVisible === false ) {
+
+						var node = processNode( child );
+
+						if ( node !== null ) {
+
+							children.push( node );
+
+						}
+
+					}
+
+				}
+
+				if ( children.length > 0 ) {
+
+					gltfNode.children = children;
+
+				}
+
+
+			}
+
+			outputJSON.nodes.push( gltfNode );
+
+			var nodeIndex = nodeMap[ object.uuid ] = outputJSON.nodes.length - 1;
+
+			return nodeIndex;
+
+		}
+
+		/**
+		 * Process Scene
+		 * @param  {THREE.Scene} node Scene to process
+		 */
+		function processScene( scene ) {
+
+			if ( ! outputJSON.scenes ) {
+
+				outputJSON.scenes = [];
+				outputJSON.scene = 0;
+
+			}
+
+			var gltfScene = {
+
+				nodes: []
+
+			};
+
+			if ( scene.name ) {
+
+				gltfScene.name = scene.name;
+
+			}
+
+			outputJSON.scenes.push( gltfScene );
+
+			var nodes = [];
+
+			for ( var i = 0, l = scene.children.length; i < l; i ++ ) {
+
+				var child = scene.children[ i ];
+
+				if ( child.visible || options.onlyVisible === false ) {
+
+					var node = processNode( child );
+
+					if ( node !== null ) {
+
+						nodes.push( node );
+
+					}
+
+				}
+
+			}
+
+			if ( nodes.length > 0 ) {
+
+				gltfScene.nodes = nodes;
+
+			}
+
+		}
+
+		/**
+		 * Creates a THREE.Scene to hold a list of objects and parse it
+		 * @param  {Array} objects List of objects to process
+		 */
+		function processObjects( objects ) {
+
+			var scene = new THREE.Scene();
+			scene.name = 'AuxScene';
+
+			for ( var i = 0; i < objects.length; i ++ ) {
+
+				// We push directly to children instead of calling `add` to prevent
+				// modify the .parent and break its original scene and hierarchy
+				scene.children.push( objects[ i ] );
+
+			}
+
+			processScene( scene );
+
+		}
+
+		function processInput( input ) {
+
+			input = input instanceof Array ? input : [ input ];
+
+			var objectsWithoutScene = [];
+
+			for ( var i = 0; i < input.length; i ++ ) {
+
+				if ( input[ i ] instanceof THREE.Scene ) {
+
+					processScene( input[ i ] );
+
+				} else {
+
+					objectsWithoutScene.push( input[ i ] );
+
+				}
+
+			}
+
+			if ( objectsWithoutScene.length > 0 ) {
+
+				processObjects( objectsWithoutScene );
+
+			}
+
+			for ( var i = 0; i < skins.length; ++ i ) {
+
+				processSkin( skins[ i ] );
+
+			}
+
+			for ( var i = 0; i < options.animations.length; ++ i ) {
+
+				processAnimation( options.animations[ i ], input[ 0 ] );
+
+			}
+
+		}
+
+		processInput( input );
+
+		// Generate buffer
+		// Create a new blob with all the dataviews from the buffers
+		var blob = new Blob( dataViews, { type: 'application/octet-stream' } );
+
+		// Update the bytlength of the only main buffer and update the uri with the base64 representation of it
+		if ( outputJSON.buffers && outputJSON.buffers.length > 0 ) {
+
+			outputJSON.buffers[ 0 ].byteLength = blob.size;
+
+			var reader = new window.FileReader();
+
+			if ( options.binary === true ) {
+
+				// https://github.com/KhronosGroup/glTF/blob/master/specification/2.0/README.md#glb-file-format-specification
+
+				var GLB_HEADER_BYTES = 12;
+				var GLB_HEADER_MAGIC = 0x46546C67;
+				var GLB_VERSION = 2;
+
+				var GLB_CHUNK_PREFIX_BYTES = 8;
+				var GLB_CHUNK_TYPE_JSON = 0x4E4F534A;
+				var GLB_CHUNK_TYPE_BIN = 0x004E4942;
+
+				reader.readAsArrayBuffer( blob );
+				reader.onloadend = function () {
+
+					// Binary chunk.
+					var binaryChunk = reader.result;
+					var binaryChunkPrefix = new DataView( new ArrayBuffer( GLB_CHUNK_PREFIX_BYTES ) );
+					binaryChunkPrefix.setUint32( 0, binaryChunk.byteLength, true );
+					binaryChunkPrefix.setUint32( 4, GLB_CHUNK_TYPE_BIN, true );
+
+					// JSON chunk.
+					delete outputJSON.buffers[ 0 ].uri; // Omitted URI indicates use of binary chunk.
+					var jsonChunk = stringToArrayBuffer( JSON.stringify( outputJSON ) );
+					var jsonChunkPrefix = new DataView( new ArrayBuffer( GLB_CHUNK_PREFIX_BYTES ) );
+					jsonChunkPrefix.setUint32( 0, jsonChunk.byteLength, true );
+					jsonChunkPrefix.setUint32( 4, GLB_CHUNK_TYPE_JSON, true );
+
+					// GLB header.
+					var header = new ArrayBuffer( GLB_HEADER_BYTES );
+					var headerView = new DataView( header );
+					headerView.setUint32( 0, GLB_HEADER_MAGIC, true );
+					headerView.setUint32( 4, GLB_VERSION, true );
+					var totalByteLength = GLB_HEADER_BYTES
+						+ jsonChunkPrefix.byteLength + jsonChunk.byteLength
+						+ binaryChunkPrefix.byteLength + binaryChunk.byteLength;
+					headerView.setUint32( 8, totalByteLength, true );
+
+					var glbBlob = new Blob( [
+						header,
+						jsonChunkPrefix,
+						jsonChunk,
+						binaryChunkPrefix,
+						binaryChunk
+					], { type: 'application/octet-stream' } );
+
+					var glbReader = new window.FileReader();
+					glbReader.readAsArrayBuffer( glbBlob );
+					glbReader.onloadend = function () {
+
+						onDone( glbReader.result );
+
+					};
+
+				};
+
+			} else {
+
+				reader.readAsDataURL( blob );
+				reader.onloadend = function () {
+
+					var base64data = reader.result;
+					outputJSON.buffers[ 0 ].uri = base64data;
+					onDone( outputJSON );
+
+				};
+
+			}
+
+		} else {
+
+			onDone( outputJSON );
+
+		}
+
+	}
+
+};
+
+},{}],4:[function(require,module,exports){
 /**
  * @author Rich Tibbett / https://github.com/richtr
  * @author mrdoob / http://mrdoob.com/
@@ -2678,14 +4052,14 @@ THREE.GLTFLoader = ( function () {
 
 } )();
 
-},{}],4:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 // stats.js - http://github.com/mrdoob/stats.js
 var Stats=module.exports=function(){function h(a){c.appendChild(a.dom);return a}function k(a){for(var d=0;d<c.children.length;d++)c.children[d].style.display=d===a?"block":"none";l=a}var l=0,c=document.createElement("div");c.style.cssText="position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:10000";c.addEventListener("click",function(a){a.preventDefault();k(++l%c.children.length)},!1);var g=(performance||Date).now(),e=g,a=0,r=h(new Stats.Panel("FPS","#0ff","#002")),f=h(new Stats.Panel("MS","#0f0","#020"));
 if(self.performance&&self.performance.memory)var t=h(new Stats.Panel("MB","#f08","#201"));k(0);return{REVISION:16,dom:c,addPanel:h,showPanel:k,begin:function(){g=(performance||Date).now()},end:function(){a++;var c=(performance||Date).now();f.update(c-g,200);if(c>e+1E3&&(r.update(1E3*a/(c-e),100),e=c,a=0,t)){var d=performance.memory;t.update(d.usedJSHeapSize/1048576,d.jsHeapSizeLimit/1048576)}return c},update:function(){g=this.end()},domElement:c,setMode:k}};
 Stats.Panel=function(h,k,l){var c=Infinity,g=0,e=Math.round,a=e(window.devicePixelRatio||1),r=80*a,f=48*a,t=3*a,u=2*a,d=3*a,m=15*a,n=74*a,p=30*a,q=document.createElement("canvas");q.width=r;q.height=f;q.style.cssText="width:80px;height:48px";var b=q.getContext("2d");b.font="bold "+9*a+"px Helvetica,Arial,sans-serif";b.textBaseline="top";b.fillStyle=l;b.fillRect(0,0,r,f);b.fillStyle=k;b.fillText(h,t,u);b.fillRect(d,m,n,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d,m,n,p);return{dom:q,update:function(f,
 v){c=Math.min(c,f);g=Math.max(g,f);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,r,m);b.fillStyle=k;b.fillText(e(f)+" "+h+" ("+e(c)+"-"+e(g)+")",t,u);b.drawImage(q,d+a,m,n-a,p,d,m,n-a,p);b.fillRect(d+n-a,m,a,p);b.fillStyle=l;b.globalAlpha=.9;b.fillRect(d+n-a,m,a,e((1-f/v)*p))}}};"object"===typeof module&&(module.exports=Stats);
 
-},{}],5:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 /*
  Copyright (c) 2013 Gildas Lormeau. All rights reserved.
 
@@ -3228,7 +4602,7 @@ v){c=Math.min(c,f);g=Math.max(g,f);b.fillStyle=l;b.globalAlpha=1;b.fillRect(0,0,
 
 })();
 
-},{}],6:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 (function (process,__filename){
 /** vim: et:ts=4:sw=4:sts=4
  * @license amdefine 1.0.1 Copyright (c) 2011-2016, The Dojo Foundation All Rights Reserved.
@@ -3533,7 +4907,7 @@ function amdefine(module, requireFn) {
 module.exports = amdefine;
 
 }).call(this,require('_process'),"/node_modules\\amdefine\\amdefine.js")
-},{"_process":135,"path":133}],7:[function(require,module,exports){
+},{"_process":137,"path":135}],8:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -3649,11 +5023,11 @@ function fromByteArray (uint8) {
   return parts.join('')
 }
 
-},{}],8:[function(require,module,exports){
-
 },{}],9:[function(require,module,exports){
-arguments[4][8][0].apply(exports,arguments)
-},{"dup":8}],10:[function(require,module,exports){
+
+},{}],10:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],11:[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -5369,7 +6743,7 @@ function numberIsNaN (obj) {
   return obj !== obj // eslint-disable-line no-self-compare
 }
 
-},{"base64-js":7,"ieee754":55}],11:[function(require,module,exports){
+},{"base64-js":8,"ieee754":57}],12:[function(require,module,exports){
 (function (Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -5480,7 +6854,7 @@ function objectToString(o) {
 }
 
 }).call(this,{"isBuffer":require("../../is-buffer/index.js")})
-},{"../../is-buffer/index.js":58}],12:[function(require,module,exports){
+},{"../../is-buffer/index.js":60}],13:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -5784,7 +7158,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],13:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 /* FileSaver.js
  * A saveAs() FileSaver implementation.
  * 1.3.2
@@ -5974,7 +7348,19 @@ if (typeof module !== "undefined" && module.exports) {
   });
 }
 
-},{}],14:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
+module.exports = function(strings) {
+  if (typeof strings === 'string') strings = [strings]
+  var exprs = [].slice.call(arguments,1)
+  var parts = []
+  for (var i = 0; i < strings.length-1; i++) {
+    parts.push(strings[i], exprs[i] || '')
+  }
+  parts.push(strings[i])
+  return parts.join('')
+}
+
+},{}],16:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -6041,7 +7427,7 @@ exports['default'] = inst;
 module.exports = exports['default'];
 
 
-},{"./handlebars.runtime":15,"./handlebars/compiler/ast":17,"./handlebars/compiler/base":18,"./handlebars/compiler/compiler":20,"./handlebars/compiler/javascript-compiler":22,"./handlebars/compiler/visitor":25,"./handlebars/no-conflict":39}],15:[function(require,module,exports){
+},{"./handlebars.runtime":17,"./handlebars/compiler/ast":19,"./handlebars/compiler/base":20,"./handlebars/compiler/compiler":22,"./handlebars/compiler/javascript-compiler":24,"./handlebars/compiler/visitor":27,"./handlebars/no-conflict":41}],17:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -6109,7 +7495,7 @@ exports['default'] = inst;
 module.exports = exports['default'];
 
 
-},{"./handlebars/base":16,"./handlebars/exception":29,"./handlebars/no-conflict":39,"./handlebars/runtime":40,"./handlebars/safe-string":41,"./handlebars/utils":42}],16:[function(require,module,exports){
+},{"./handlebars/base":18,"./handlebars/exception":31,"./handlebars/no-conflict":41,"./handlebars/runtime":42,"./handlebars/safe-string":43,"./handlebars/utils":44}],18:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -6215,7 +7601,7 @@ exports.createFrame = _utils.createFrame;
 exports.logger = _logger2['default'];
 
 
-},{"./decorators":27,"./exception":29,"./helpers":30,"./logger":38,"./utils":42}],17:[function(require,module,exports){
+},{"./decorators":29,"./exception":31,"./helpers":32,"./logger":40,"./utils":44}],19:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -6248,7 +7634,7 @@ exports['default'] = AST;
 module.exports = exports['default'];
 
 
-},{}],18:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -6298,7 +7684,7 @@ function parse(input, options) {
 }
 
 
-},{"../utils":42,"./helpers":21,"./parser":23,"./whitespace-control":26}],19:[function(require,module,exports){
+},{"../utils":44,"./helpers":23,"./parser":25,"./whitespace-control":28}],21:[function(require,module,exports){
 /* global define */
 'use strict';
 
@@ -6466,7 +7852,7 @@ exports['default'] = CodeGen;
 module.exports = exports['default'];
 
 
-},{"../utils":42,"source-map":44}],20:[function(require,module,exports){
+},{"../utils":44,"source-map":46}],22:[function(require,module,exports){
 /* eslint-disable new-cap */
 
 'use strict';
@@ -7041,7 +8427,7 @@ function transformLiteralToPath(sexpr) {
 }
 
 
-},{"../exception":29,"../utils":42,"./ast":17}],21:[function(require,module,exports){
+},{"../exception":31,"../utils":44,"./ast":19}],23:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -7273,7 +8659,7 @@ function preparePartialBlock(open, program, close, locInfo) {
 }
 
 
-},{"../exception":29}],22:[function(require,module,exports){
+},{"../exception":31}],24:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -8403,7 +9789,7 @@ exports['default'] = JavaScriptCompiler;
 module.exports = exports['default'];
 
 
-},{"../base":16,"../exception":29,"../utils":42,"./code-gen":19}],23:[function(require,module,exports){
+},{"../base":18,"../exception":31,"../utils":44,"./code-gen":21}],25:[function(require,module,exports){
 // File ignored in coverage tests via setting in .istanbul.yml
 /* Jison generated parser */
 "use strict";
@@ -9144,7 +10530,7 @@ var handlebars = (function () {
 module.exports = exports["default"];
 
 
-},{}],24:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 /* eslint-disable new-cap */
 'use strict';
 
@@ -9332,7 +10718,7 @@ PrintVisitor.prototype.HashPair = function (pair) {
 /* eslint-enable new-cap */
 
 
-},{"./visitor":25}],25:[function(require,module,exports){
+},{"./visitor":27}],27:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9474,7 +10860,7 @@ exports['default'] = Visitor;
 module.exports = exports['default'];
 
 
-},{"../exception":29}],26:[function(require,module,exports){
+},{"../exception":31}],28:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9697,7 +11083,7 @@ exports['default'] = WhitespaceControl;
 module.exports = exports['default'];
 
 
-},{"./visitor":25}],27:[function(require,module,exports){
+},{"./visitor":27}],29:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9715,7 +11101,7 @@ function registerDefaultDecorators(instance) {
 }
 
 
-},{"./decorators/inline":28}],28:[function(require,module,exports){
+},{"./decorators/inline":30}],30:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9746,7 +11132,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":42}],29:[function(require,module,exports){
+},{"../utils":44}],31:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9802,7 +11188,7 @@ exports['default'] = Exception;
 module.exports = exports['default'];
 
 
-},{}],30:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9850,7 +11236,7 @@ function registerDefaultHelpers(instance) {
 }
 
 
-},{"./helpers/block-helper-missing":31,"./helpers/each":32,"./helpers/helper-missing":33,"./helpers/if":34,"./helpers/log":35,"./helpers/lookup":36,"./helpers/with":37}],31:[function(require,module,exports){
+},{"./helpers/block-helper-missing":33,"./helpers/each":34,"./helpers/helper-missing":35,"./helpers/if":36,"./helpers/log":37,"./helpers/lookup":38,"./helpers/with":39}],33:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9891,7 +11277,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":42}],32:[function(require,module,exports){
+},{"../utils":44}],34:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -9987,7 +11373,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../exception":29,"../utils":42}],33:[function(require,module,exports){
+},{"../exception":31,"../utils":44}],35:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10014,7 +11400,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../exception":29}],34:[function(require,module,exports){
+},{"../exception":31}],36:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10045,7 +11431,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":42}],35:[function(require,module,exports){
+},{"../utils":44}],37:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10073,7 +11459,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{}],36:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10087,7 +11473,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{}],37:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10122,7 +11508,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":42}],38:[function(require,module,exports){
+},{"../utils":44}],40:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10171,7 +11557,7 @@ exports['default'] = logger;
 module.exports = exports['default'];
 
 
-},{"./utils":42}],39:[function(require,module,exports){
+},{"./utils":44}],41:[function(require,module,exports){
 (function (global){
 /* global window */
 'use strict';
@@ -10195,7 +11581,7 @@ module.exports = exports['default'];
 
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],40:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10504,7 +11890,7 @@ function executeDecorators(fn, prog, container, depths, data, blockParams) {
 }
 
 
-},{"./base":16,"./exception":29,"./utils":42}],41:[function(require,module,exports){
+},{"./base":18,"./exception":31,"./utils":44}],43:[function(require,module,exports){
 // Build out our basic SafeString type
 'use strict';
 
@@ -10521,7 +11907,7 @@ exports['default'] = SafeString;
 module.exports = exports['default'];
 
 
-},{}],42:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -10647,7 +12033,7 @@ function appendContextPath(contextPath, id) {
 }
 
 
-},{}],43:[function(require,module,exports){
+},{}],45:[function(require,module,exports){
 // USAGE:
 // var handlebars = require('handlebars');
 /* eslint-disable no-var */
@@ -10674,7 +12060,7 @@ if (typeof require !== 'undefined' && require.extensions) {
   require.extensions['.hbs'] = extension;
 }
 
-},{"../dist/cjs/handlebars":14,"../dist/cjs/handlebars/compiler/printer":24,"fs":9}],44:[function(require,module,exports){
+},{"../dist/cjs/handlebars":16,"../dist/cjs/handlebars/compiler/printer":26,"fs":10}],46:[function(require,module,exports){
 /*
  * Copyright 2009-2011 Mozilla Foundation and contributors
  * Licensed under the New BSD license. See LICENSE.txt or:
@@ -10684,7 +12070,7 @@ exports.SourceMapGenerator = require('./source-map/source-map-generator').Source
 exports.SourceMapConsumer = require('./source-map/source-map-consumer').SourceMapConsumer;
 exports.SourceNode = require('./source-map/source-node').SourceNode;
 
-},{"./source-map/source-map-consumer":51,"./source-map/source-map-generator":52,"./source-map/source-node":53}],45:[function(require,module,exports){
+},{"./source-map/source-map-consumer":53,"./source-map/source-map-generator":54,"./source-map/source-node":55}],47:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -10793,7 +12179,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./util":54,"amdefine":6}],46:[function(require,module,exports){
+},{"./util":56,"amdefine":7}],48:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -10941,7 +12327,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./base64":47,"amdefine":6}],47:[function(require,module,exports){
+},{"./base64":49,"amdefine":7}],49:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -11016,7 +12402,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":6}],48:[function(require,module,exports){
+},{"amdefine":7}],50:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -11135,7 +12521,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":6}],49:[function(require,module,exports){
+},{"amdefine":7}],51:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2014 Mozilla Foundation and contributors
@@ -11223,7 +12609,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./util":54,"amdefine":6}],50:[function(require,module,exports){
+},{"./util":56,"amdefine":7}],52:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -11345,7 +12731,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":6}],51:[function(require,module,exports){
+},{"amdefine":7}],53:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -12424,7 +13810,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./array-set":45,"./base64-vlq":46,"./binary-search":48,"./quick-sort":50,"./util":54,"amdefine":6}],52:[function(require,module,exports){
+},{"./array-set":47,"./base64-vlq":48,"./binary-search":50,"./quick-sort":52,"./util":56,"amdefine":7}],54:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -12825,7 +14211,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./array-set":45,"./base64-vlq":46,"./mapping-list":49,"./util":54,"amdefine":6}],53:[function(require,module,exports){
+},{"./array-set":47,"./base64-vlq":48,"./mapping-list":51,"./util":56,"amdefine":7}],55:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -13241,7 +14627,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./source-map-generator":52,"./util":54,"amdefine":6}],54:[function(require,module,exports){
+},{"./source-map-generator":54,"./util":56,"amdefine":7}],56:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -13613,7 +14999,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":6}],55:[function(require,module,exports){
+},{"amdefine":7}],57:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = nBytes * 8 - mLen - 1
@@ -13699,7 +15085,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],56:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 (function (global){
 'use strict';
 var Mutation = global.MutationObserver || global.WebKitMutationObserver;
@@ -13772,7 +15158,7 @@ function immediate(task) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],57:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -13797,7 +15183,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],58:[function(require,module,exports){
+},{}],60:[function(require,module,exports){
 /*!
  * Determine if an object is a Buffer
  *
@@ -13820,7 +15206,7 @@ function isSlowBuffer (obj) {
   return typeof obj.readFloatLE === 'function' && typeof obj.slice === 'function' && isBuffer(obj.slice(0, 0))
 }
 
-},{}],59:[function(require,module,exports){
+},{}],61:[function(require,module,exports){
 'use strict';
 var utils = require('./utils');
 var support = require('./support');
@@ -13928,7 +15314,7 @@ exports.decode = function(input) {
     return output;
 };
 
-},{"./support":88,"./utils":90}],60:[function(require,module,exports){
+},{"./support":90,"./utils":92}],62:[function(require,module,exports){
 'use strict';
 
 var external = require("./external");
@@ -14005,7 +15391,7 @@ CompressedObject.createWorkerFrom = function (uncompressedWorker, compression, c
 
 module.exports = CompressedObject;
 
-},{"./external":64,"./stream/Crc32Probe":83,"./stream/DataLengthProbe":84,"./stream/DataWorker":85}],61:[function(require,module,exports){
+},{"./external":66,"./stream/Crc32Probe":85,"./stream/DataLengthProbe":86,"./stream/DataWorker":87}],63:[function(require,module,exports){
 'use strict';
 
 var GenericWorker = require("./stream/GenericWorker");
@@ -14021,7 +15407,7 @@ exports.STORE = {
 };
 exports.DEFLATE = require('./flate');
 
-},{"./flate":65,"./stream/GenericWorker":86}],62:[function(require,module,exports){
+},{"./flate":67,"./stream/GenericWorker":88}],64:[function(require,module,exports){
 'use strict';
 
 var utils = require('./utils');
@@ -14100,7 +15486,7 @@ module.exports = function crc32wrapper(input, crc) {
     }
 };
 
-},{"./utils":90}],63:[function(require,module,exports){
+},{"./utils":92}],65:[function(require,module,exports){
 'use strict';
 exports.base64 = false;
 exports.binary = false;
@@ -14113,7 +15499,7 @@ exports.comment = null;
 exports.unixPermissions = null;
 exports.dosPermissions = null;
 
-},{}],64:[function(require,module,exports){
+},{}],66:[function(require,module,exports){
 /* global Promise */
 'use strict';
 
@@ -14134,7 +15520,7 @@ module.exports = {
     Promise: ES6Promise
 };
 
-},{"lie":115}],65:[function(require,module,exports){
+},{"lie":117}],67:[function(require,module,exports){
 'use strict';
 var USE_TYPEDARRAY = (typeof Uint8Array !== 'undefined') && (typeof Uint16Array !== 'undefined') && (typeof Uint32Array !== 'undefined');
 
@@ -14221,7 +15607,7 @@ exports.uncompressWorker = function () {
     return new FlateWorker("Inflate", {});
 };
 
-},{"./stream/GenericWorker":86,"./utils":90,"pako":117}],66:[function(require,module,exports){
+},{"./stream/GenericWorker":88,"./utils":92,"pako":119}],68:[function(require,module,exports){
 'use strict';
 
 var utils = require('../utils');
@@ -14763,7 +16149,7 @@ ZipFileWorker.prototype.lock = function () {
 
 module.exports = ZipFileWorker;
 
-},{"../crc32":62,"../signature":81,"../stream/GenericWorker":86,"../utf8":89,"../utils":90}],67:[function(require,module,exports){
+},{"../crc32":64,"../signature":83,"../stream/GenericWorker":88,"../utf8":91,"../utils":92}],69:[function(require,module,exports){
 'use strict';
 
 var compressions = require('../compressions');
@@ -14822,7 +16208,7 @@ exports.generateWorker = function (zip, options, comment) {
     return zipFileWorker;
 };
 
-},{"../compressions":61,"./ZipFileWorker":66}],68:[function(require,module,exports){
+},{"../compressions":63,"./ZipFileWorker":68}],70:[function(require,module,exports){
 'use strict';
 
 /**
@@ -14876,7 +16262,7 @@ JSZip.loadAsync = function (content, options) {
 JSZip.external = require("./external");
 module.exports = JSZip;
 
-},{"./defaults":63,"./external":64,"./load":69,"./object":73,"./support":88}],69:[function(require,module,exports){
+},{"./defaults":65,"./external":66,"./load":71,"./object":75,"./support":90}],71:[function(require,module,exports){
 'use strict';
 var utils = require('./utils');
 var external = require("./external");
@@ -14960,7 +16346,7 @@ module.exports = function(data, options) {
     });
 };
 
-},{"./external":64,"./nodejsUtils":70,"./stream/Crc32Probe":83,"./utf8":89,"./utils":90,"./zipEntries":91}],70:[function(require,module,exports){
+},{"./external":66,"./nodejsUtils":72,"./stream/Crc32Probe":85,"./utf8":91,"./utils":92,"./zipEntries":93}],72:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -15016,7 +16402,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":10}],71:[function(require,module,exports){
+},{"buffer":11}],73:[function(require,module,exports){
 "use strict";
 
 var utils = require('../utils');
@@ -15092,7 +16478,7 @@ NodejsStreamInputAdapter.prototype.resume = function () {
 
 module.exports = NodejsStreamInputAdapter;
 
-},{"../stream/GenericWorker":86,"../utils":90}],72:[function(require,module,exports){
+},{"../stream/GenericWorker":88,"../utils":92}],74:[function(require,module,exports){
 'use strict';
 
 var Readable = require('readable-stream').Readable;
@@ -15136,7 +16522,7 @@ NodejsStreamOutputAdapter.prototype._read = function() {
 
 module.exports = NodejsStreamOutputAdapter;
 
-},{"../utils":90,"readable-stream":74}],73:[function(require,module,exports){
+},{"../utils":92,"readable-stream":76}],75:[function(require,module,exports){
 'use strict';
 var utf8 = require('./utf8');
 var utils = require('./utils');
@@ -15527,7 +16913,7 @@ var out = {
 };
 module.exports = out;
 
-},{"./compressedObject":60,"./defaults":63,"./generate":67,"./nodejs/NodejsStreamInputAdapter":71,"./nodejsUtils":70,"./stream/GenericWorker":86,"./stream/StreamHelper":87,"./utf8":89,"./utils":90,"./zipObject":93}],74:[function(require,module,exports){
+},{"./compressedObject":62,"./defaults":65,"./generate":69,"./nodejs/NodejsStreamInputAdapter":73,"./nodejsUtils":72,"./stream/GenericWorker":88,"./stream/StreamHelper":89,"./utf8":91,"./utils":92,"./zipObject":95}],76:[function(require,module,exports){
 /*
  * This file is used by module bundlers (browserify/webpack/etc) when
  * including a stream implementation. We use "readable-stream" to get a
@@ -15538,7 +16924,7 @@ module.exports = out;
  */
 module.exports = require("stream");
 
-},{"stream":152}],75:[function(require,module,exports){
+},{"stream":154}],77:[function(require,module,exports){
 'use strict';
 var DataReader = require('./DataReader');
 var utils = require('../utils');
@@ -15597,7 +16983,7 @@ ArrayReader.prototype.readData = function(size) {
 };
 module.exports = ArrayReader;
 
-},{"../utils":90,"./DataReader":76}],76:[function(require,module,exports){
+},{"../utils":92,"./DataReader":78}],78:[function(require,module,exports){
 'use strict';
 var utils = require('../utils');
 
@@ -15715,7 +17101,7 @@ DataReader.prototype = {
 };
 module.exports = DataReader;
 
-},{"../utils":90}],77:[function(require,module,exports){
+},{"../utils":92}],79:[function(require,module,exports){
 'use strict';
 var Uint8ArrayReader = require('./Uint8ArrayReader');
 var utils = require('../utils');
@@ -15736,7 +17122,7 @@ NodeBufferReader.prototype.readData = function(size) {
 };
 module.exports = NodeBufferReader;
 
-},{"../utils":90,"./Uint8ArrayReader":79}],78:[function(require,module,exports){
+},{"../utils":92,"./Uint8ArrayReader":81}],80:[function(require,module,exports){
 'use strict';
 var DataReader = require('./DataReader');
 var utils = require('../utils');
@@ -15776,7 +17162,7 @@ StringReader.prototype.readData = function(size) {
 };
 module.exports = StringReader;
 
-},{"../utils":90,"./DataReader":76}],79:[function(require,module,exports){
+},{"../utils":92,"./DataReader":78}],81:[function(require,module,exports){
 'use strict';
 var ArrayReader = require('./ArrayReader');
 var utils = require('../utils');
@@ -15800,7 +17186,7 @@ Uint8ArrayReader.prototype.readData = function(size) {
 };
 module.exports = Uint8ArrayReader;
 
-},{"../utils":90,"./ArrayReader":75}],80:[function(require,module,exports){
+},{"../utils":92,"./ArrayReader":77}],82:[function(require,module,exports){
 'use strict';
 
 var utils = require('../utils');
@@ -15830,7 +17216,7 @@ module.exports = function (data) {
     return new ArrayReader(utils.transformTo("array", data));
 };
 
-},{"../support":88,"../utils":90,"./ArrayReader":75,"./NodeBufferReader":77,"./StringReader":78,"./Uint8ArrayReader":79}],81:[function(require,module,exports){
+},{"../support":90,"../utils":92,"./ArrayReader":77,"./NodeBufferReader":79,"./StringReader":80,"./Uint8ArrayReader":81}],83:[function(require,module,exports){
 'use strict';
 exports.LOCAL_FILE_HEADER = "PK\x03\x04";
 exports.CENTRAL_FILE_HEADER = "PK\x01\x02";
@@ -15839,7 +17225,7 @@ exports.ZIP64_CENTRAL_DIRECTORY_LOCATOR = "PK\x06\x07";
 exports.ZIP64_CENTRAL_DIRECTORY_END = "PK\x06\x06";
 exports.DATA_DESCRIPTOR = "PK\x07\x08";
 
-},{}],82:[function(require,module,exports){
+},{}],84:[function(require,module,exports){
 'use strict';
 
 var GenericWorker = require('./GenericWorker');
@@ -15867,7 +17253,7 @@ ConvertWorker.prototype.processChunk = function (chunk) {
 };
 module.exports = ConvertWorker;
 
-},{"../utils":90,"./GenericWorker":86}],83:[function(require,module,exports){
+},{"../utils":92,"./GenericWorker":88}],85:[function(require,module,exports){
 'use strict';
 
 var GenericWorker = require('./GenericWorker');
@@ -15893,7 +17279,7 @@ Crc32Probe.prototype.processChunk = function (chunk) {
 };
 module.exports = Crc32Probe;
 
-},{"../crc32":62,"../utils":90,"./GenericWorker":86}],84:[function(require,module,exports){
+},{"../crc32":64,"../utils":92,"./GenericWorker":88}],86:[function(require,module,exports){
 'use strict';
 
 var utils = require('../utils');
@@ -15924,7 +17310,7 @@ DataLengthProbe.prototype.processChunk = function (chunk) {
 module.exports = DataLengthProbe;
 
 
-},{"../utils":90,"./GenericWorker":86}],85:[function(require,module,exports){
+},{"../utils":92,"./GenericWorker":88}],87:[function(require,module,exports){
 'use strict';
 
 var utils = require('../utils');
@@ -16042,7 +17428,7 @@ DataWorker.prototype._tick = function() {
 
 module.exports = DataWorker;
 
-},{"../utils":90,"./GenericWorker":86}],86:[function(require,module,exports){
+},{"../utils":92,"./GenericWorker":88}],88:[function(require,module,exports){
 'use strict';
 
 /**
@@ -16307,7 +17693,7 @@ GenericWorker.prototype = {
 
 module.exports = GenericWorker;
 
-},{}],87:[function(require,module,exports){
+},{}],89:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -16523,7 +17909,7 @@ StreamHelper.prototype = {
 module.exports = StreamHelper;
 
 }).call(this,require("buffer").Buffer)
-},{"../base64":59,"../external":64,"../nodejs/NodejsStreamOutputAdapter":72,"../support":88,"../utils":90,"./ConvertWorker":82,"./GenericWorker":86,"buffer":10}],88:[function(require,module,exports){
+},{"../base64":61,"../external":66,"../nodejs/NodejsStreamOutputAdapter":74,"../support":90,"../utils":92,"./ConvertWorker":84,"./GenericWorker":88,"buffer":11}],90:[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -16565,7 +17951,7 @@ try {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":10,"readable-stream":74}],89:[function(require,module,exports){
+},{"buffer":11,"readable-stream":76}],91:[function(require,module,exports){
 'use strict';
 
 var utils = require('./utils');
@@ -16842,7 +18228,7 @@ Utf8EncodeWorker.prototype.processChunk = function (chunk) {
 };
 exports.Utf8EncodeWorker = Utf8EncodeWorker;
 
-},{"./nodejsUtils":70,"./stream/GenericWorker":86,"./support":88,"./utils":90}],90:[function(require,module,exports){
+},{"./nodejsUtils":72,"./stream/GenericWorker":88,"./support":90,"./utils":92}],92:[function(require,module,exports){
 'use strict';
 
 var support = require('./support');
@@ -17320,7 +18706,7 @@ exports.prepareContent = function(name, inputData, isBinary, isOptimizedBinarySt
     });
 };
 
-},{"./base64":59,"./external":64,"./nodejsUtils":70,"./support":88,"core-js/library/fn/set-immediate":94}],91:[function(require,module,exports){
+},{"./base64":61,"./external":66,"./nodejsUtils":72,"./support":90,"core-js/library/fn/set-immediate":96}],93:[function(require,module,exports){
 'use strict';
 var readerFor = require('./reader/readerFor');
 var utils = require('./utils');
@@ -17584,7 +18970,7 @@ ZipEntries.prototype = {
 // }}} end of ZipEntries
 module.exports = ZipEntries;
 
-},{"./reader/readerFor":80,"./signature":81,"./support":88,"./utf8":89,"./utils":90,"./zipEntry":92}],92:[function(require,module,exports){
+},{"./reader/readerFor":82,"./signature":83,"./support":90,"./utf8":91,"./utils":92,"./zipEntry":94}],94:[function(require,module,exports){
 'use strict';
 var readerFor = require('./reader/readerFor');
 var utils = require('./utils');
@@ -17878,7 +19264,7 @@ ZipEntry.prototype = {
 };
 module.exports = ZipEntry;
 
-},{"./compressedObject":60,"./compressions":61,"./crc32":62,"./reader/readerFor":80,"./support":88,"./utf8":89,"./utils":90}],93:[function(require,module,exports){
+},{"./compressedObject":62,"./compressions":63,"./crc32":64,"./reader/readerFor":82,"./support":90,"./utf8":91,"./utils":92}],95:[function(require,module,exports){
 'use strict';
 
 var StreamHelper = require('./stream/StreamHelper');
@@ -18013,30 +19399,30 @@ for(var i = 0; i < removedMethods.length; i++) {
 }
 module.exports = ZipObject;
 
-},{"./compressedObject":60,"./stream/DataWorker":85,"./stream/GenericWorker":86,"./stream/StreamHelper":87,"./utf8":89}],94:[function(require,module,exports){
+},{"./compressedObject":62,"./stream/DataWorker":87,"./stream/GenericWorker":88,"./stream/StreamHelper":89,"./utf8":91}],96:[function(require,module,exports){
 require('../modules/web.immediate');
 module.exports = require('../modules/_core').setImmediate;
-},{"../modules/_core":98,"../modules/web.immediate":114}],95:[function(require,module,exports){
+},{"../modules/_core":100,"../modules/web.immediate":116}],97:[function(require,module,exports){
 module.exports = function(it){
   if(typeof it != 'function')throw TypeError(it + ' is not a function!');
   return it;
 };
-},{}],96:[function(require,module,exports){
+},{}],98:[function(require,module,exports){
 var isObject = require('./_is-object');
 module.exports = function(it){
   if(!isObject(it))throw TypeError(it + ' is not an object!');
   return it;
 };
-},{"./_is-object":109}],97:[function(require,module,exports){
+},{"./_is-object":111}],99:[function(require,module,exports){
 var toString = {}.toString;
 
 module.exports = function(it){
   return toString.call(it).slice(8, -1);
 };
-},{}],98:[function(require,module,exports){
+},{}],100:[function(require,module,exports){
 var core = module.exports = {version: '2.3.0'};
 if(typeof __e == 'number')__e = core; // eslint-disable-line no-undef
-},{}],99:[function(require,module,exports){
+},{}],101:[function(require,module,exports){
 // optional / simple context binding
 var aFunction = require('./_a-function');
 module.exports = function(fn, that, length){
@@ -18057,12 +19443,12 @@ module.exports = function(fn, that, length){
     return fn.apply(that, arguments);
   };
 };
-},{"./_a-function":95}],100:[function(require,module,exports){
+},{"./_a-function":97}],102:[function(require,module,exports){
 // Thank's IE8 for his funny defineProperty
 module.exports = !require('./_fails')(function(){
   return Object.defineProperty({}, 'a', {get: function(){ return 7; }}).a != 7;
 });
-},{"./_fails":103}],101:[function(require,module,exports){
+},{"./_fails":105}],103:[function(require,module,exports){
 var isObject = require('./_is-object')
   , document = require('./_global').document
   // in old IE typeof document.createElement is 'object'
@@ -18070,7 +19456,7 @@ var isObject = require('./_is-object')
 module.exports = function(it){
   return is ? document.createElement(it) : {};
 };
-},{"./_global":104,"./_is-object":109}],102:[function(require,module,exports){
+},{"./_global":106,"./_is-object":111}],104:[function(require,module,exports){
 var global    = require('./_global')
   , core      = require('./_core')
   , ctx       = require('./_ctx')
@@ -18132,7 +19518,7 @@ $export.W = 32;  // wrap
 $export.U = 64;  // safe
 $export.R = 128; // real proto method for `library` 
 module.exports = $export;
-},{"./_core":98,"./_ctx":99,"./_global":104,"./_hide":105}],103:[function(require,module,exports){
+},{"./_core":100,"./_ctx":101,"./_global":106,"./_hide":107}],105:[function(require,module,exports){
 module.exports = function(exec){
   try {
     return !!exec();
@@ -18140,12 +19526,12 @@ module.exports = function(exec){
     return true;
   }
 };
-},{}],104:[function(require,module,exports){
+},{}],106:[function(require,module,exports){
 // https://github.com/zloirock/core-js/issues/86#issuecomment-115759028
 var global = module.exports = typeof window != 'undefined' && window.Math == Math
   ? window : typeof self != 'undefined' && self.Math == Math ? self : Function('return this')();
 if(typeof __g == 'number')__g = global; // eslint-disable-line no-undef
-},{}],105:[function(require,module,exports){
+},{}],107:[function(require,module,exports){
 var dP         = require('./_object-dp')
   , createDesc = require('./_property-desc');
 module.exports = require('./_descriptors') ? function(object, key, value){
@@ -18154,13 +19540,13 @@ module.exports = require('./_descriptors') ? function(object, key, value){
   object[key] = value;
   return object;
 };
-},{"./_descriptors":100,"./_object-dp":110,"./_property-desc":111}],106:[function(require,module,exports){
+},{"./_descriptors":102,"./_object-dp":112,"./_property-desc":113}],108:[function(require,module,exports){
 module.exports = require('./_global').document && document.documentElement;
-},{"./_global":104}],107:[function(require,module,exports){
+},{"./_global":106}],109:[function(require,module,exports){
 module.exports = !require('./_descriptors') && !require('./_fails')(function(){
   return Object.defineProperty(require('./_dom-create')('div'), 'a', {get: function(){ return 7; }}).a != 7;
 });
-},{"./_descriptors":100,"./_dom-create":101,"./_fails":103}],108:[function(require,module,exports){
+},{"./_descriptors":102,"./_dom-create":103,"./_fails":105}],110:[function(require,module,exports){
 // fast apply, http://jsperf.lnkit.com/fast-apply/5
 module.exports = function(fn, args, that){
   var un = that === undefined;
@@ -18177,11 +19563,11 @@ module.exports = function(fn, args, that){
                       : fn.call(that, args[0], args[1], args[2], args[3]);
   } return              fn.apply(that, args);
 };
-},{}],109:[function(require,module,exports){
+},{}],111:[function(require,module,exports){
 module.exports = function(it){
   return typeof it === 'object' ? it !== null : typeof it === 'function';
 };
-},{}],110:[function(require,module,exports){
+},{}],112:[function(require,module,exports){
 var anObject       = require('./_an-object')
   , IE8_DOM_DEFINE = require('./_ie8-dom-define')
   , toPrimitive    = require('./_to-primitive')
@@ -18198,7 +19584,7 @@ exports.f = require('./_descriptors') ? Object.defineProperty : function defineP
   if('value' in Attributes)O[P] = Attributes.value;
   return O;
 };
-},{"./_an-object":96,"./_descriptors":100,"./_ie8-dom-define":107,"./_to-primitive":113}],111:[function(require,module,exports){
+},{"./_an-object":98,"./_descriptors":102,"./_ie8-dom-define":109,"./_to-primitive":115}],113:[function(require,module,exports){
 module.exports = function(bitmap, value){
   return {
     enumerable  : !(bitmap & 1),
@@ -18207,7 +19593,7 @@ module.exports = function(bitmap, value){
     value       : value
   };
 };
-},{}],112:[function(require,module,exports){
+},{}],114:[function(require,module,exports){
 var ctx                = require('./_ctx')
   , invoke             = require('./_invoke')
   , html               = require('./_html')
@@ -18283,7 +19669,7 @@ module.exports = {
   set:   setTask,
   clear: clearTask
 };
-},{"./_cof":97,"./_ctx":99,"./_dom-create":101,"./_global":104,"./_html":106,"./_invoke":108}],113:[function(require,module,exports){
+},{"./_cof":99,"./_ctx":101,"./_dom-create":103,"./_global":106,"./_html":108,"./_invoke":110}],115:[function(require,module,exports){
 // 7.1.1 ToPrimitive(input [, PreferredType])
 var isObject = require('./_is-object');
 // instead of the ES6 spec version, we didn't implement @@toPrimitive case
@@ -18296,14 +19682,14 @@ module.exports = function(it, S){
   if(!S && typeof (fn = it.toString) == 'function' && !isObject(val = fn.call(it)))return val;
   throw TypeError("Can't convert object to primitive value");
 };
-},{"./_is-object":109}],114:[function(require,module,exports){
+},{"./_is-object":111}],116:[function(require,module,exports){
 var $export = require('./_export')
   , $task   = require('./_task');
 $export($export.G + $export.B, {
   setImmediate:   $task.set,
   clearImmediate: $task.clear
 });
-},{"./_export":102,"./_task":112}],115:[function(require,module,exports){
+},{"./_export":104,"./_task":114}],117:[function(require,module,exports){
 'use strict';
 var immediate = require('immediate');
 
@@ -18558,7 +19944,7 @@ function race(iterable) {
   }
 }
 
-},{"immediate":56}],116:[function(require,module,exports){
+},{"immediate":58}],118:[function(require,module,exports){
 /*
 object-assign
 (c) Sindre Sorhus
@@ -18650,7 +20036,7 @@ module.exports = shouldUseNative() ? Object.assign : function (target, source) {
 	return to;
 };
 
-},{}],117:[function(require,module,exports){
+},{}],119:[function(require,module,exports){
 // Top level file is just a mixin of submodules & constants
 'use strict';
 
@@ -18666,7 +20052,7 @@ assign(pako, deflate, inflate, constants);
 
 module.exports = pako;
 
-},{"./lib/deflate":118,"./lib/inflate":119,"./lib/utils/common":120,"./lib/zlib/constants":123}],118:[function(require,module,exports){
+},{"./lib/deflate":120,"./lib/inflate":121,"./lib/utils/common":122,"./lib/zlib/constants":125}],120:[function(require,module,exports){
 'use strict';
 
 
@@ -19068,7 +20454,7 @@ exports.deflate = deflate;
 exports.deflateRaw = deflateRaw;
 exports.gzip = gzip;
 
-},{"./utils/common":120,"./utils/strings":121,"./zlib/deflate":125,"./zlib/messages":130,"./zlib/zstream":132}],119:[function(require,module,exports){
+},{"./utils/common":122,"./utils/strings":123,"./zlib/deflate":127,"./zlib/messages":132,"./zlib/zstream":134}],121:[function(require,module,exports){
 'use strict';
 
 
@@ -19488,7 +20874,7 @@ exports.inflate = inflate;
 exports.inflateRaw = inflateRaw;
 exports.ungzip  = inflate;
 
-},{"./utils/common":120,"./utils/strings":121,"./zlib/constants":123,"./zlib/gzheader":126,"./zlib/inflate":128,"./zlib/messages":130,"./zlib/zstream":132}],120:[function(require,module,exports){
+},{"./utils/common":122,"./utils/strings":123,"./zlib/constants":125,"./zlib/gzheader":128,"./zlib/inflate":130,"./zlib/messages":132,"./zlib/zstream":134}],122:[function(require,module,exports){
 'use strict';
 
 
@@ -19595,7 +20981,7 @@ exports.setTyped = function (on) {
 
 exports.setTyped(TYPED_OK);
 
-},{}],121:[function(require,module,exports){
+},{}],123:[function(require,module,exports){
 // String encode/decode helpers
 'use strict';
 
@@ -19782,7 +21168,7 @@ exports.utf8border = function (buf, max) {
   return (pos + _utf8len[buf[pos]] > max) ? pos : max;
 };
 
-},{"./common":120}],122:[function(require,module,exports){
+},{"./common":122}],124:[function(require,module,exports){
 'use strict';
 
 // Note: adler32 takes 12% for level 0 and 2% for level 6.
@@ -19835,7 +21221,7 @@ function adler32(adler, buf, len, pos) {
 
 module.exports = adler32;
 
-},{}],123:[function(require,module,exports){
+},{}],125:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -19905,7 +21291,7 @@ module.exports = {
   //Z_NULL:                 null // Use -1 or null inline, depending on var type
 };
 
-},{}],124:[function(require,module,exports){
+},{}],126:[function(require,module,exports){
 'use strict';
 
 // Note: we can't get significant speed boost here.
@@ -19966,7 +21352,7 @@ function crc32(crc, buf, len, pos) {
 
 module.exports = crc32;
 
-},{}],125:[function(require,module,exports){
+},{}],127:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -21842,7 +23228,7 @@ exports.deflatePrime = deflatePrime;
 exports.deflateTune = deflateTune;
 */
 
-},{"../utils/common":120,"./adler32":122,"./crc32":124,"./messages":130,"./trees":131}],126:[function(require,module,exports){
+},{"../utils/common":122,"./adler32":124,"./crc32":126,"./messages":132,"./trees":133}],128:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -21902,7 +23288,7 @@ function GZheader() {
 
 module.exports = GZheader;
 
-},{}],127:[function(require,module,exports){
+},{}],129:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -22249,7 +23635,7 @@ module.exports = function inflate_fast(strm, start) {
   return;
 };
 
-},{}],128:[function(require,module,exports){
+},{}],130:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -23807,7 +25193,7 @@ exports.inflateSyncPoint = inflateSyncPoint;
 exports.inflateUndermine = inflateUndermine;
 */
 
-},{"../utils/common":120,"./adler32":122,"./crc32":124,"./inffast":127,"./inftrees":129}],129:[function(require,module,exports){
+},{"../utils/common":122,"./adler32":124,"./crc32":126,"./inffast":129,"./inftrees":131}],131:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -24152,7 +25538,7 @@ module.exports = function inflate_table(type, lens, lens_index, codes, table, ta
   return 0;
 };
 
-},{"../utils/common":120}],130:[function(require,module,exports){
+},{"../utils/common":122}],132:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -24186,7 +25572,7 @@ module.exports = {
   '-6':   'incompatible version' /* Z_VERSION_ERROR (-6) */
 };
 
-},{}],131:[function(require,module,exports){
+},{}],133:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -25408,7 +26794,7 @@ exports._tr_flush_block  = _tr_flush_block;
 exports._tr_tally = _tr_tally;
 exports._tr_align = _tr_align;
 
-},{"../utils/common":120}],132:[function(require,module,exports){
+},{"../utils/common":122}],134:[function(require,module,exports){
 'use strict';
 
 // (C) 1995-2013 Jean-loup Gailly and Mark Adler
@@ -25457,7 +26843,7 @@ function ZStream() {
 
 module.exports = ZStream;
 
-},{}],133:[function(require,module,exports){
+},{}],135:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -25685,16 +27071,16 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":135}],134:[function(require,module,exports){
+},{"_process":137}],136:[function(require,module,exports){
 (function (process){
 'use strict';
 
 if (!process.version ||
     process.version.indexOf('v0.') === 0 ||
     process.version.indexOf('v1.') === 0 && process.version.indexOf('v1.8.') !== 0) {
-  module.exports = nextTick;
+  module.exports = { nextTick: nextTick };
 } else {
-  module.exports = process.nextTick;
+  module.exports = process
 }
 
 function nextTick(fn, arg1, arg2, arg3) {
@@ -25731,8 +27117,9 @@ function nextTick(fn, arg1, arg2, arg3) {
   }
 }
 
+
 }).call(this,require('_process'))
-},{"_process":135}],135:[function(require,module,exports){
+},{"_process":137}],137:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -25918,7 +27305,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],136:[function(require,module,exports){
+},{}],138:[function(require,module,exports){
 'use strict';
 var strictUriEncode = require('strict-uri-encode');
 var objectAssign = require('object-assign');
@@ -26125,10 +27512,10 @@ exports.stringify = function (obj, opts) {
 	}).join('&') : '';
 };
 
-},{"object-assign":116,"strict-uri-encode":153}],137:[function(require,module,exports){
+},{"object-assign":118,"strict-uri-encode":155}],139:[function(require,module,exports){
 module.exports = require('./lib/_stream_duplex.js');
 
-},{"./lib/_stream_duplex.js":138}],138:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":140}],140:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26159,7 +27546,7 @@ module.exports = require('./lib/_stream_duplex.js');
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 /*<replacement>*/
@@ -26253,7 +27640,7 @@ function forEach(xs, f) {
     f(xs[i], i);
   }
 }
-},{"./_stream_readable":140,"./_stream_writable":142,"core-util-is":11,"inherits":57,"process-nextick-args":134}],139:[function(require,module,exports){
+},{"./_stream_readable":142,"./_stream_writable":144,"core-util-is":12,"inherits":59,"process-nextick-args":136}],141:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26301,7 +27688,7 @@ function PassThrough(options) {
 PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
-},{"./_stream_transform":141,"core-util-is":11,"inherits":57}],140:[function(require,module,exports){
+},{"./_stream_transform":143,"core-util-is":12,"inherits":59}],142:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -26328,7 +27715,7 @@ PassThrough.prototype._transform = function (chunk, encoding, cb) {
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 module.exports = Readable;
@@ -26355,9 +27742,8 @@ var EElistenerCount = function (emitter, type) {
 var Stream = require('./internal/streams/stream');
 /*</replacement>*/
 
-// TODO(bmeurer): Change this back to const once hole checks are
-// properly optimized away early in Ignition+TurboFan.
 /*<replacement>*/
+
 var Buffer = require('safe-buffer').Buffer;
 var OurUint8Array = global.Uint8Array || function () {};
 function _uint8ArrayToBuffer(chunk) {
@@ -26366,6 +27752,7 @@ function _uint8ArrayToBuffer(chunk) {
 function _isUint8Array(obj) {
   return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
 }
+
 /*</replacement>*/
 
 /*<replacement>*/
@@ -26394,15 +27781,13 @@ var kProxyEvents = ['error', 'close', 'destroy', 'pause', 'resume'];
 function prependListener(emitter, event, fn) {
   // Sadly this is not cacheable as some libraries bundle their own
   // event emitter implementation with them.
-  if (typeof emitter.prependListener === 'function') {
-    return emitter.prependListener(event, fn);
-  } else {
-    // This is a hack to make sure that our error handler is attached before any
-    // userland ones.  NEVER DO THIS. This is here only because this code needs
-    // to continue to work with older versions of Node.js that do not include
-    // the prependListener() method. The goal is to eventually remove this hack.
-    if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
-  }
+  if (typeof emitter.prependListener === 'function') return emitter.prependListener(event, fn);
+
+  // This is a hack to make sure that our error handler is attached before any
+  // userland ones.  NEVER DO THIS. This is here only because this code needs
+  // to continue to work with older versions of Node.js that do not include
+  // the prependListener() method. The goal is to eventually remove this hack.
+  if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
 }
 
 function ReadableState(options, stream) {
@@ -26410,17 +27795,26 @@ function ReadableState(options, stream) {
 
   options = options || {};
 
+  // Duplex streams are both readable and writable, but share
+  // the same options object.
+  // However, some cases require setting options to different
+  // values for the readable and the writable sides of the duplex stream.
+  // These options can be provided separately as readableXXX and writableXXX.
+  var isDuplex = stream instanceof Duplex;
+
   // object stream flag. Used to make read(n) ignore n and to
   // make all the buffer merging and length checks go away
   this.objectMode = !!options.objectMode;
 
-  if (stream instanceof Duplex) this.objectMode = this.objectMode || !!options.readableObjectMode;
+  if (isDuplex) this.objectMode = this.objectMode || !!options.readableObjectMode;
 
   // the point at which it stops calling _read() to fill the buffer
   // Note: 0 is a valid value, means "don't call _read preemptively ever"
   var hwm = options.highWaterMark;
+  var readableHwm = options.readableHighWaterMark;
   var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-  this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm;
+
+  if (hwm || hwm === 0) this.highWaterMark = hwm;else if (isDuplex && (readableHwm || readableHwm === 0)) this.highWaterMark = readableHwm;else this.highWaterMark = defaultHwm;
 
   // cast to ints.
   this.highWaterMark = Math.floor(this.highWaterMark);
@@ -27115,18 +28509,19 @@ function flow(stream) {
 // This is *not* part of the readable stream interface.
 // It is an ugly unfortunate mess of history.
 Readable.prototype.wrap = function (stream) {
+  var _this = this;
+
   var state = this._readableState;
   var paused = false;
 
-  var self = this;
   stream.on('end', function () {
     debug('wrapped end');
     if (state.decoder && !state.ended) {
       var chunk = state.decoder.end();
-      if (chunk && chunk.length) self.push(chunk);
+      if (chunk && chunk.length) _this.push(chunk);
     }
 
-    self.push(null);
+    _this.push(null);
   });
 
   stream.on('data', function (chunk) {
@@ -27136,7 +28531,7 @@ Readable.prototype.wrap = function (stream) {
     // don't skip over falsy values in objectMode
     if (state.objectMode && (chunk === null || chunk === undefined)) return;else if (!state.objectMode && (!chunk || !chunk.length)) return;
 
-    var ret = self.push(chunk);
+    var ret = _this.push(chunk);
     if (!ret) {
       paused = true;
       stream.pause();
@@ -27157,12 +28552,12 @@ Readable.prototype.wrap = function (stream) {
 
   // proxy certain important events.
   for (var n = 0; n < kProxyEvents.length; n++) {
-    stream.on(kProxyEvents[n], self.emit.bind(self, kProxyEvents[n]));
+    stream.on(kProxyEvents[n], this.emit.bind(this, kProxyEvents[n]));
   }
 
   // when we try to consume some more bytes, simply unpause the
   // underlying stream.
-  self._read = function (n) {
+  this._read = function (n) {
     debug('wrapped _read', n);
     if (paused) {
       paused = false;
@@ -27170,7 +28565,7 @@ Readable.prototype.wrap = function (stream) {
     }
   };
 
-  return self;
+  return this;
 };
 
 // exposed for testing purposes only.
@@ -27311,7 +28706,7 @@ function indexOf(xs, x) {
   return -1;
 }
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":138,"./internal/streams/BufferList":143,"./internal/streams/destroy":144,"./internal/streams/stream":145,"_process":135,"core-util-is":11,"events":12,"inherits":57,"isarray":146,"process-nextick-args":134,"safe-buffer":151,"string_decoder/":154,"util":8}],141:[function(require,module,exports){
+},{"./_stream_duplex":140,"./internal/streams/BufferList":145,"./internal/streams/destroy":146,"./internal/streams/stream":147,"_process":137,"core-util-is":12,"events":13,"inherits":59,"isarray":148,"process-nextick-args":136,"safe-buffer":153,"string_decoder/":156,"util":9}],143:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -27388,39 +28783,28 @@ util.inherits = require('inherits');
 
 util.inherits(Transform, Duplex);
 
-function TransformState(stream) {
-  this.afterTransform = function (er, data) {
-    return afterTransform(stream, er, data);
-  };
-
-  this.needTransform = false;
-  this.transforming = false;
-  this.writecb = null;
-  this.writechunk = null;
-  this.writeencoding = null;
-}
-
-function afterTransform(stream, er, data) {
-  var ts = stream._transformState;
+function afterTransform(er, data) {
+  var ts = this._transformState;
   ts.transforming = false;
 
   var cb = ts.writecb;
 
   if (!cb) {
-    return stream.emit('error', new Error('write callback called multiple times'));
+    return this.emit('error', new Error('write callback called multiple times'));
   }
 
   ts.writechunk = null;
   ts.writecb = null;
 
-  if (data !== null && data !== undefined) stream.push(data);
+  if (data != null) // single equals check for both `null` and `undefined`
+    this.push(data);
 
   cb(er);
 
-  var rs = stream._readableState;
+  var rs = this._readableState;
   rs.reading = false;
   if (rs.needReadable || rs.length < rs.highWaterMark) {
-    stream._read(rs.highWaterMark);
+    this._read(rs.highWaterMark);
   }
 }
 
@@ -27429,9 +28813,14 @@ function Transform(options) {
 
   Duplex.call(this, options);
 
-  this._transformState = new TransformState(this);
-
-  var stream = this;
+  this._transformState = {
+    afterTransform: afterTransform.bind(this),
+    needTransform: false,
+    transforming: false,
+    writecb: null,
+    writechunk: null,
+    writeencoding: null
+  };
 
   // start out asking for a readable event once data is transformed.
   this._readableState.needReadable = true;
@@ -27448,11 +28837,19 @@ function Transform(options) {
   }
 
   // When the writable side finishes, then flush out anything remaining.
-  this.once('prefinish', function () {
-    if (typeof this._flush === 'function') this._flush(function (er, data) {
-      done(stream, er, data);
-    });else done(stream);
-  });
+  this.on('prefinish', prefinish);
+}
+
+function prefinish() {
+  var _this = this;
+
+  if (typeof this._flush === 'function') {
+    this._flush(function (er, data) {
+      done(_this, er, data);
+    });
+  } else {
+    done(this, null, null);
+  }
 }
 
 Transform.prototype.push = function (chunk, encoding) {
@@ -27502,31 +28899,29 @@ Transform.prototype._read = function (n) {
 };
 
 Transform.prototype._destroy = function (err, cb) {
-  var _this = this;
+  var _this2 = this;
 
   Duplex.prototype._destroy.call(this, err, function (err2) {
     cb(err2);
-    _this.emit('close');
+    _this2.emit('close');
   });
 };
 
 function done(stream, er, data) {
   if (er) return stream.emit('error', er);
 
-  if (data !== null && data !== undefined) stream.push(data);
+  if (data != null) // single equals check for both `null` and `undefined`
+    stream.push(data);
 
   // if there's nothing in the write buffer, then that means
   // that nothing more will ever be provided
-  var ws = stream._writableState;
-  var ts = stream._transformState;
+  if (stream._writableState.length) throw new Error('Calling transform done when ws.length != 0');
 
-  if (ws.length) throw new Error('Calling transform done when ws.length != 0');
-
-  if (ts.transforming) throw new Error('Calling transform done when still transforming');
+  if (stream._transformState.transforming) throw new Error('Calling transform done when still transforming');
 
   return stream.push(null);
 }
-},{"./_stream_duplex":138,"core-util-is":11,"inherits":57}],142:[function(require,module,exports){
+},{"./_stream_duplex":140,"core-util-is":12,"inherits":59}],144:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -27557,7 +28952,7 @@ function done(stream, er, data) {
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 module.exports = Writable;
@@ -27609,6 +29004,7 @@ var Stream = require('./internal/streams/stream');
 /*</replacement>*/
 
 /*<replacement>*/
+
 var Buffer = require('safe-buffer').Buffer;
 var OurUint8Array = global.Uint8Array || function () {};
 function _uint8ArrayToBuffer(chunk) {
@@ -27617,6 +29013,7 @@ function _uint8ArrayToBuffer(chunk) {
 function _isUint8Array(obj) {
   return Buffer.isBuffer(obj) || obj instanceof OurUint8Array;
 }
+
 /*</replacement>*/
 
 var destroyImpl = require('./internal/streams/destroy');
@@ -27630,18 +29027,27 @@ function WritableState(options, stream) {
 
   options = options || {};
 
+  // Duplex streams are both readable and writable, but share
+  // the same options object.
+  // However, some cases require setting options to different
+  // values for the readable and the writable sides of the duplex stream.
+  // These options can be provided separately as readableXXX and writableXXX.
+  var isDuplex = stream instanceof Duplex;
+
   // object stream flag to indicate whether or not this stream
   // contains buffers or objects.
   this.objectMode = !!options.objectMode;
 
-  if (stream instanceof Duplex) this.objectMode = this.objectMode || !!options.writableObjectMode;
+  if (isDuplex) this.objectMode = this.objectMode || !!options.writableObjectMode;
 
   // the point at which write() starts returning false
   // Note: 0 is a valid value, means that we always return false if
   // the entire buffer is not flushed immediately on write()
   var hwm = options.highWaterMark;
+  var writableHwm = options.writableHighWaterMark;
   var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-  this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm;
+
+  if (hwm || hwm === 0) this.highWaterMark = hwm;else if (isDuplex && (writableHwm || writableHwm === 0)) this.highWaterMark = writableHwm;else this.highWaterMark = defaultHwm;
 
   // cast to ints.
   this.highWaterMark = Math.floor(this.highWaterMark);
@@ -27755,6 +29161,7 @@ if (typeof Symbol === 'function' && Symbol.hasInstance && typeof Function.protot
   Object.defineProperty(Writable, Symbol.hasInstance, {
     value: function (object) {
       if (realHasInstance.call(this, object)) return true;
+      if (this !== Writable) return false;
 
       return object && object._writableState instanceof WritableState;
     }
@@ -27832,7 +29239,7 @@ function validChunk(stream, state, chunk, cb) {
 Writable.prototype.write = function (chunk, encoding, cb) {
   var state = this._writableState;
   var ret = false;
-  var isBuf = _isUint8Array(chunk) && !state.objectMode;
+  var isBuf = !state.objectMode && _isUint8Array(chunk);
 
   if (isBuf && !Buffer.isBuffer(chunk)) {
     chunk = _uint8ArrayToBuffer(chunk);
@@ -28044,6 +29451,7 @@ function clearBuffer(stream, state) {
     } else {
       state.corkedRequestsFree = new CorkedRequest(state);
     }
+    state.bufferedRequestCount = 0;
   } else {
     // Slow case, write chunks one-by-one
     while (entry) {
@@ -28054,6 +29462,7 @@ function clearBuffer(stream, state) {
 
       doWrite(stream, state, false, len, chunk, encoding, cb);
       entry = entry.next;
+      state.bufferedRequestCount--;
       // if we didn't call the onwrite immediately, then
       // it means that we need to wait until it does.
       // also, that means that the chunk and cb are currently
@@ -28066,7 +29475,6 @@ function clearBuffer(stream, state) {
     if (entry === null) state.lastBufferedRequest = null;
   }
 
-  state.bufferedRequestCount = 0;
   state.bufferedRequest = entry;
   state.bufferProcessing = false;
 }
@@ -28193,15 +29601,13 @@ Writable.prototype._destroy = function (err, cb) {
   cb(err);
 };
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./_stream_duplex":138,"./internal/streams/destroy":144,"./internal/streams/stream":145,"_process":135,"core-util-is":11,"inherits":57,"process-nextick-args":134,"safe-buffer":151,"util-deprecate":158}],143:[function(require,module,exports){
+},{"./_stream_duplex":140,"./internal/streams/destroy":146,"./internal/streams/stream":147,"_process":137,"core-util-is":12,"inherits":59,"process-nextick-args":136,"safe-buffer":153,"util-deprecate":160}],145:[function(require,module,exports){
 'use strict';
-
-/*<replacement>*/
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 var Buffer = require('safe-buffer').Buffer;
-/*</replacement>*/
+var util = require('util');
 
 function copyBuffer(src, target, offset) {
   src.copy(target, offset);
@@ -28268,12 +29674,19 @@ module.exports = function () {
 
   return BufferList;
 }();
-},{"safe-buffer":151}],144:[function(require,module,exports){
+
+if (util && util.inspect && util.inspect.custom) {
+  module.exports.prototype[util.inspect.custom] = function () {
+    var obj = util.inspect({ length: this.length });
+    return this.constructor.name + ' ' + obj;
+  };
+}
+},{"safe-buffer":153,"util":9}],146:[function(require,module,exports){
 'use strict';
 
 /*<replacement>*/
 
-var processNextTick = require('process-nextick-args');
+var processNextTick = require('process-nextick-args').nextTick;
 /*</replacement>*/
 
 // undocumented cb() API, needed for core, not for public API
@@ -28289,7 +29702,7 @@ function destroy(err, cb) {
     } else if (err && (!this._writableState || !this._writableState.errorEmitted)) {
       processNextTick(emitErrorNT, this, err);
     }
-    return;
+    return this;
   }
 
   // we set destroyed to true before firing error callbacks in order
@@ -28314,6 +29727,8 @@ function destroy(err, cb) {
       cb(err);
     }
   });
+
+  return this;
 }
 
 function undestroy() {
@@ -28341,20 +29756,20 @@ module.exports = {
   destroy: destroy,
   undestroy: undestroy
 };
-},{"process-nextick-args":134}],145:[function(require,module,exports){
+},{"process-nextick-args":136}],147:[function(require,module,exports){
 module.exports = require('events').EventEmitter;
 
-},{"events":12}],146:[function(require,module,exports){
+},{"events":13}],148:[function(require,module,exports){
 var toString = {}.toString;
 
 module.exports = Array.isArray || function (arr) {
   return toString.call(arr) == '[object Array]';
 };
 
-},{}],147:[function(require,module,exports){
+},{}],149:[function(require,module,exports){
 module.exports = require('./readable').PassThrough
 
-},{"./readable":148}],148:[function(require,module,exports){
+},{"./readable":150}],150:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = exports;
 exports.Readable = exports;
@@ -28363,13 +29778,13 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":138,"./lib/_stream_passthrough.js":139,"./lib/_stream_readable.js":140,"./lib/_stream_transform.js":141,"./lib/_stream_writable.js":142}],149:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":140,"./lib/_stream_passthrough.js":141,"./lib/_stream_readable.js":142,"./lib/_stream_transform.js":143,"./lib/_stream_writable.js":144}],151:[function(require,module,exports){
 module.exports = require('./readable').Transform
 
-},{"./readable":148}],150:[function(require,module,exports){
+},{"./readable":150}],152:[function(require,module,exports){
 module.exports = require('./lib/_stream_writable.js');
 
-},{"./lib/_stream_writable.js":142}],151:[function(require,module,exports){
+},{"./lib/_stream_writable.js":144}],153:[function(require,module,exports){
 /* eslint-disable node/no-deprecated-api */
 var buffer = require('buffer')
 var Buffer = buffer.Buffer
@@ -28433,7 +29848,7 @@ SafeBuffer.allocUnsafeSlow = function (size) {
   return buffer.SlowBuffer(size)
 }
 
-},{"buffer":10}],152:[function(require,module,exports){
+},{"buffer":11}],154:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -28562,7 +29977,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":12,"inherits":57,"readable-stream/duplex.js":137,"readable-stream/passthrough.js":147,"readable-stream/readable.js":148,"readable-stream/transform.js":149,"readable-stream/writable.js":150}],153:[function(require,module,exports){
+},{"events":13,"inherits":59,"readable-stream/duplex.js":139,"readable-stream/passthrough.js":149,"readable-stream/readable.js":150,"readable-stream/transform.js":151,"readable-stream/writable.js":152}],155:[function(require,module,exports){
 'use strict';
 module.exports = function (str) {
 	return encodeURIComponent(str).replace(/[!'()*]/g, function (c) {
@@ -28570,7 +29985,7 @@ module.exports = function (str) {
 	});
 };
 
-},{}],154:[function(require,module,exports){
+},{}],156:[function(require,module,exports){
 'use strict';
 
 var Buffer = require('safe-buffer').Buffer;
@@ -28843,10 +30258,10 @@ function simpleWrite(buf) {
 function simpleEnd(buf) {
   return buf && buf.length ? this.write(buf) : '';
 }
-},{"safe-buffer":151}],155:[function(require,module,exports){
-
-var vert = "#define GLSLIFY 1\nattribute vec3 position;\nuniform mat4 modelViewMatrix;\nuniform mat4 projectionMatrix;\nvarying vec2 vUv;\nvoid main() {\n  gl_Position = vec4(position, 1.0);\n  vUv = vec2(position.x, position.y) * 0.5 + 0.5;\n}"
-var frag = "precision mediump float;\n#define GLSLIFY 1\n//\n// GLSL textureless classic 3D noise \"cnoise\",\n// with an RSL-style periodic variant \"pnoise\".\n// Author:  Stefan Gustavson (stefan.gustavson@liu.se)\n// Version: 2011-10-11\n//\n// Many thanks to Ian McEwan of Ashima Arts for the\n// ideas for permutation and gradient selection.\n//\n// Copyright (c) 2011 Stefan Gustavson. All rights reserved.\n// Distributed under the MIT license. See LICENSE file.\n// https://github.com/ashima/webgl-noise\n//\n\nvec3 mod289_1117569599(vec3 x)\n{\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 mod289_1117569599(vec4 x)\n{\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 permute_1117569599(vec4 x)\n{\n  return mod289_1117569599(((x*34.0)+1.0)*x);\n}\n\nvec4 taylorInvSqrt_1117569599(vec4 r)\n{\n  return 1.79284291400159 - 0.85373472095314 * r;\n}\n\nvec3 fade_1117569599(vec3 t) {\n  return t*t*t*(t*(t*6.0-15.0)+10.0);\n}\n\n// Classic Perlin noise, periodic variant\nfloat pnoise_1117569599(vec3 P, vec3 rep)\n{\n  vec3 Pi0 = mod(floor(P), rep); // Integer part, modulo period\n  vec3 Pi1 = mod(Pi0 + vec3(1.0), rep); // Integer part + 1, mod period\n  Pi0 = mod289_1117569599(Pi0);\n  Pi1 = mod289_1117569599(Pi1);\n  vec3 Pf0 = fract(P); // Fractional part for interpolation\n  vec3 Pf1 = Pf0 - vec3(1.0); // Fractional part - 1.0\n  vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);\n  vec4 iy = vec4(Pi0.yy, Pi1.yy);\n  vec4 iz0 = Pi0.zzzz;\n  vec4 iz1 = Pi1.zzzz;\n\n  vec4 ixy = permute_1117569599(permute_1117569599(ix) + iy);\n  vec4 ixy0 = permute_1117569599(ixy + iz0);\n  vec4 ixy1 = permute_1117569599(ixy + iz1);\n\n  vec4 gx0 = ixy0 * (1.0 / 7.0);\n  vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;\n  gx0 = fract(gx0);\n  vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);\n  vec4 sz0 = step(gz0, vec4(0.0));\n  gx0 -= sz0 * (step(0.0, gx0) - 0.5);\n  gy0 -= sz0 * (step(0.0, gy0) - 0.5);\n\n  vec4 gx1 = ixy1 * (1.0 / 7.0);\n  vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;\n  gx1 = fract(gx1);\n  vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);\n  vec4 sz1 = step(gz1, vec4(0.0));\n  gx1 -= sz1 * (step(0.0, gx1) - 0.5);\n  gy1 -= sz1 * (step(0.0, gy1) - 0.5);\n\n  vec3 g000 = vec3(gx0.x,gy0.x,gz0.x);\n  vec3 g100 = vec3(gx0.y,gy0.y,gz0.y);\n  vec3 g010 = vec3(gx0.z,gy0.z,gz0.z);\n  vec3 g110 = vec3(gx0.w,gy0.w,gz0.w);\n  vec3 g001 = vec3(gx1.x,gy1.x,gz1.x);\n  vec3 g101 = vec3(gx1.y,gy1.y,gz1.y);\n  vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);\n  vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);\n\n  vec4 norm0 = taylorInvSqrt_1117569599(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));\n  g000 *= norm0.x;\n  g010 *= norm0.y;\n  g100 *= norm0.z;\n  g110 *= norm0.w;\n  vec4 norm1 = taylorInvSqrt_1117569599(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));\n  g001 *= norm1.x;\n  g011 *= norm1.y;\n  g101 *= norm1.z;\n  g111 *= norm1.w;\n\n  float n000 = dot(g000, Pf0);\n  float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));\n  float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));\n  float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));\n  float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));\n  float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));\n  float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));\n  float n111 = dot(g111, Pf1);\n\n  vec3 fade_xyz = fade_1117569599(Pf0);\n  vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);\n  vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);\n  float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);\n  return 2.2 * n_xyz;\n}\n\n//\n// Description : Array and textureless GLSL 2D/3D/4D simplex\n//               noise functions.\n//      Author : Ian McEwan, Ashima Arts.\n//  Maintainer : ijm\n//     Lastmod : 20110822 (ijm)\n//     License : Copyright (C) 2011 Ashima Arts. All rights reserved.\n//               Distributed under the MIT License. See LICENSE file.\n//               https://github.com/ashima/webgl-noise\n//\n\nvec3 mod289_1604150559(vec3 x) {\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 mod289_1604150559(vec4 x) {\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 permute_1604150559(vec4 x) {\n     return mod289_1604150559(((x*34.0)+1.0)*x);\n}\n\nvec4 taylorInvSqrt_1604150559(vec4 r)\n{\n  return 1.79284291400159 - 0.85373472095314 * r;\n}\n\nfloat snoise_1604150559(vec3 v)\n  {\n  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;\n  const vec4  D_1604150559 = vec4(0.0, 0.5, 1.0, 2.0);\n\n// First corner\n  vec3 i  = floor(v + dot(v, C.yyy) );\n  vec3 x0 =   v - i + dot(i, C.xxx) ;\n\n// Other corners\n  vec3 g_1604150559 = step(x0.yzx, x0.xyz);\n  vec3 l = 1.0 - g_1604150559;\n  vec3 i1 = min( g_1604150559.xyz, l.zxy );\n  vec3 i2 = max( g_1604150559.xyz, l.zxy );\n\n  //   x0 = x0 - 0.0 + 0.0 * C.xxx;\n  //   x1 = x0 - i1  + 1.0 * C.xxx;\n  //   x2 = x0 - i2  + 2.0 * C.xxx;\n  //   x3 = x0 - 1.0 + 3.0 * C.xxx;\n  vec3 x1 = x0 - i1 + C.xxx;\n  vec3 x2 = x0 - i2 + C.yyy; // 2.0*C.x = 1/3 = C.y\n  vec3 x3 = x0 - D_1604150559.yyy;      // -1.0+3.0*C.x = -0.5 = -D.y\n\n// Permutations\n  i = mod289_1604150559(i);\n  vec4 p = permute_1604150559( permute_1604150559( permute_1604150559(\n             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))\n           + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))\n           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));\n\n// Gradients: 7x7 points over a square, mapped onto an octahedron.\n// The ring size 17*17 = 289 is close to a multiple of 49 (49*6 = 294)\n  float n_ = 0.142857142857; // 1.0/7.0\n  vec3  ns = n_ * D_1604150559.wyz - D_1604150559.xzx;\n\n  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);  //  mod(p,7*7)\n\n  vec4 x_ = floor(j * ns.z);\n  vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)\n\n  vec4 x = x_ *ns.x + ns.yyyy;\n  vec4 y = y_ *ns.x + ns.yyyy;\n  vec4 h = 1.0 - abs(x) - abs(y);\n\n  vec4 b0 = vec4( x.xy, y.xy );\n  vec4 b1 = vec4( x.zw, y.zw );\n\n  //vec4 s0 = vec4(lessThan(b0,0.0))*2.0 - 1.0;\n  //vec4 s1 = vec4(lessThan(b1,0.0))*2.0 - 1.0;\n  vec4 s0 = floor(b0)*2.0 + 1.0;\n  vec4 s1 = floor(b1)*2.0 + 1.0;\n  vec4 sh = -step(h, vec4(0.0));\n\n  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;\n  vec4 a1_1604150559 = b1.xzyw + s1.xzyw*sh.zzww ;\n\n  vec3 p0_1604150559 = vec3(a0.xy,h.x);\n  vec3 p1 = vec3(a0.zw,h.y);\n  vec3 p2 = vec3(a1_1604150559.xy,h.z);\n  vec3 p3 = vec3(a1_1604150559.zw,h.w);\n\n//Normalise gradients\n  vec4 norm = taylorInvSqrt_1604150559(vec4(dot(p0_1604150559,p0_1604150559), dot(p1,p1), dot(p2, p2), dot(p3,p3)));\n  p0_1604150559 *= norm.x;\n  p1 *= norm.y;\n  p2 *= norm.z;\n  p3 *= norm.w;\n\n// Mix final noise value\n  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);\n  m = m * m;\n  return 42.0 * dot( m*m, vec4( dot(p0_1604150559,x0), dot(p1,x1),\n                                dot(p2,x2), dot(p3,x3) ) );\n  }\n\nfloat grain_2281831123(vec2 texCoord, vec2 resolution, float frame, float multiplier) {\n    vec2 mult = texCoord * resolution;\n    float offset = snoise_1604150559(vec3(mult / multiplier, frame));\n    float n1 = pnoise_1117569599(vec3(mult, offset), vec3(1.0/texCoord * resolution, 1.0));\n    return n1 / 2.0 + 0.5;\n}\n\nfloat grain_2281831123(vec2 texCoord, vec2 resolution, float frame) {\n    return grain_2281831123(texCoord, resolution, frame, 2.5);\n}\n\nfloat grain_2281831123(vec2 texCoord, vec2 resolution) {\n    return grain_2281831123(texCoord, resolution, 0.0);\n}\n\nvec3 blendSoftLight_1540259130(vec3 base, vec3 blend) {\n    return mix(\n        sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend), \n        2.0 * base * blend + base * base * (1.0 - 2.0 * blend), \n        step(base, vec3(0.5))\n    );\n}\n\n// Using conditionals\n// vec3 blendSoftLight(vec3 base, vec3 blend) {\n//     return vec3(\n//         ((blend.r < 0.5) ? (2.0 * base.r * blend.r + base.r * base.r * (1.0 - 2.0 * blend.r)) : (sqrt(base.r) * (2.0 * blend.r - 1.0) + 2.0 * base.r * (1.0 - blend.r))),\n//         ((blend.g < 0.5) ? (2.0 * base.g * blend.g + base.g * base.g * (1.0 - 2.0 * blend.g)) : (sqrt(base.g) * (2.0 * blend.g - 1.0) + 2.0 * base.g * (1.0 - blend.g))),\n//         ((blend.b < 0.5) ? (2.0 * base.b * blend.b + base.b * base.b * (1.0 - 2.0 * blend.b)) : (sqrt(base.b) * (2.0 * blend.b - 1.0) + 2.0 * base.b * (1.0 - blend.b)))\n//     );\n// }\n\nuniform vec3 color1;\nuniform vec3 color2;\nuniform float aspect;\nuniform vec2 offset;\nuniform vec2 scale;\nuniform float noiseAlpha;\nuniform bool aspectCorrection;\nuniform float grainScale;\nuniform float grainTime;\nuniform vec2 smooth;\n\nvarying vec2 vUv;\n\nvoid main() {\n  vec2 q = vec2(vUv - 0.5);\n  if (aspectCorrection) {\n    q.x *= aspect;\n  }\n  q /= scale;\n  q -= offset;\n  float dst = length(q);\n  dst = smoothstep(smooth.x, smooth.y, dst);\n  vec3 color = mix(color1, color2, dst);\n  \n  if (noiseAlpha > 0.0 && grainScale > 0.0) {\n    float gSize = 1.0 / grainScale;\n    float g = grain_2281831123(vUv, vec2(gSize * aspect, gSize), grainTime);\n    vec3 noiseColor = blendSoftLight_1540259130(color, vec3(g));\n    gl_FragColor.rgb = mix(color, noiseColor, noiseAlpha);\n  } else {\n    gl_FragColor.rgb = color;\n  }\n  gl_FragColor.a = 1.0;\n}"
+},{"safe-buffer":153}],157:[function(require,module,exports){
+var glslify = require('glslify')
+var vert = glslify(["#define GLSLIFY 1\nattribute vec3 position;\nuniform mat4 modelViewMatrix;\nuniform mat4 projectionMatrix;\nvarying vec2 vUv;\nvoid main() {\n  gl_Position = vec4(position, 1.0);\n  vUv = vec2(position.x, position.y) * 0.5 + 0.5;\n}"])
+var frag = glslify(["precision mediump float;\n#define GLSLIFY 1\n//\n// GLSL textureless classic 3D noise \"cnoise\",\n// with an RSL-style periodic variant \"pnoise\".\n// Author:  Stefan Gustavson (stefan.gustavson@liu.se)\n// Version: 2011-10-11\n//\n// Many thanks to Ian McEwan of Ashima Arts for the\n// ideas for permutation and gradient selection.\n//\n// Copyright (c) 2011 Stefan Gustavson. All rights reserved.\n// Distributed under the MIT license. See LICENSE file.\n// https://github.com/ashima/webgl-noise\n//\n\nvec3 mod289_1(vec3 x)\n{\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 mod289_1(vec4 x)\n{\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 permute_1(vec4 x)\n{\n  return mod289_1(((x*34.0)+1.0)*x);\n}\n\nvec4 taylorInvSqrt_1(vec4 r)\n{\n  return 1.79284291400159 - 0.85373472095314 * r;\n}\n\nvec3 fade(vec3 t) {\n  return t*t*t*(t*(t*6.0-15.0)+10.0);\n}\n\n// Classic Perlin noise, periodic variant\nfloat pnoise(vec3 P, vec3 rep)\n{\n  vec3 Pi0 = mod(floor(P), rep); // Integer part, modulo period\n  vec3 Pi1 = mod(Pi0 + vec3(1.0), rep); // Integer part + 1, mod period\n  Pi0 = mod289_1(Pi0);\n  Pi1 = mod289_1(Pi1);\n  vec3 Pf0 = fract(P); // Fractional part for interpolation\n  vec3 Pf1 = Pf0 - vec3(1.0); // Fractional part - 1.0\n  vec4 ix = vec4(Pi0.x, Pi1.x, Pi0.x, Pi1.x);\n  vec4 iy = vec4(Pi0.yy, Pi1.yy);\n  vec4 iz0 = Pi0.zzzz;\n  vec4 iz1 = Pi1.zzzz;\n\n  vec4 ixy = permute_1(permute_1(ix) + iy);\n  vec4 ixy0 = permute_1(ixy + iz0);\n  vec4 ixy1 = permute_1(ixy + iz1);\n\n  vec4 gx0 = ixy0 * (1.0 / 7.0);\n  vec4 gy0 = fract(floor(gx0) * (1.0 / 7.0)) - 0.5;\n  gx0 = fract(gx0);\n  vec4 gz0 = vec4(0.5) - abs(gx0) - abs(gy0);\n  vec4 sz0 = step(gz0, vec4(0.0));\n  gx0 -= sz0 * (step(0.0, gx0) - 0.5);\n  gy0 -= sz0 * (step(0.0, gy0) - 0.5);\n\n  vec4 gx1 = ixy1 * (1.0 / 7.0);\n  vec4 gy1 = fract(floor(gx1) * (1.0 / 7.0)) - 0.5;\n  gx1 = fract(gx1);\n  vec4 gz1 = vec4(0.5) - abs(gx1) - abs(gy1);\n  vec4 sz1 = step(gz1, vec4(0.0));\n  gx1 -= sz1 * (step(0.0, gx1) - 0.5);\n  gy1 -= sz1 * (step(0.0, gy1) - 0.5);\n\n  vec3 g000 = vec3(gx0.x,gy0.x,gz0.x);\n  vec3 g100 = vec3(gx0.y,gy0.y,gz0.y);\n  vec3 g010 = vec3(gx0.z,gy0.z,gz0.z);\n  vec3 g110 = vec3(gx0.w,gy0.w,gz0.w);\n  vec3 g001 = vec3(gx1.x,gy1.x,gz1.x);\n  vec3 g101 = vec3(gx1.y,gy1.y,gz1.y);\n  vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);\n  vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);\n\n  vec4 norm0 = taylorInvSqrt_1(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));\n  g000 *= norm0.x;\n  g010 *= norm0.y;\n  g100 *= norm0.z;\n  g110 *= norm0.w;\n  vec4 norm1 = taylorInvSqrt_1(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));\n  g001 *= norm1.x;\n  g011 *= norm1.y;\n  g101 *= norm1.z;\n  g111 *= norm1.w;\n\n  float n000 = dot(g000, Pf0);\n  float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));\n  float n010 = dot(g010, vec3(Pf0.x, Pf1.y, Pf0.z));\n  float n110 = dot(g110, vec3(Pf1.xy, Pf0.z));\n  float n001 = dot(g001, vec3(Pf0.xy, Pf1.z));\n  float n101 = dot(g101, vec3(Pf1.x, Pf0.y, Pf1.z));\n  float n011 = dot(g011, vec3(Pf0.x, Pf1.yz));\n  float n111 = dot(g111, Pf1);\n\n  vec3 fade_xyz = fade(Pf0);\n  vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);\n  vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);\n  float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);\n  return 2.2 * n_xyz;\n}\n\n//\n// Description : Array and textureless GLSL 2D/3D/4D simplex\n//               noise functions.\n//      Author : Ian McEwan, Ashima Arts.\n//  Maintainer : ijm\n//     Lastmod : 20110822 (ijm)\n//     License : Copyright (C) 2011 Ashima Arts. All rights reserved.\n//               Distributed under the MIT License. See LICENSE file.\n//               https://github.com/ashima/webgl-noise\n//\n\nvec3 mod289_0(vec3 x) {\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 mod289_0(vec4 x) {\n  return x - floor(x * (1.0 / 289.0)) * 289.0;\n}\n\nvec4 permute_0(vec4 x) {\n     return mod289_0(((x*34.0)+1.0)*x);\n}\n\nvec4 taylorInvSqrt_0(vec4 r)\n{\n  return 1.79284291400159 - 0.85373472095314 * r;\n}\n\nfloat snoise(vec3 v)\n  {\n  const vec2  C = vec2(1.0/6.0, 1.0/3.0) ;\n  const vec4  D = vec4(0.0, 0.5, 1.0, 2.0);\n\n// First corner\n  vec3 i  = floor(v + dot(v, C.yyy) );\n  vec3 x0 =   v - i + dot(i, C.xxx) ;\n\n// Other corners\n  vec3 g_0 = step(x0.yzx, x0.xyz);\n  vec3 l = 1.0 - g_0;\n  vec3 i1 = min( g_0.xyz, l.zxy );\n  vec3 i2 = max( g_0.xyz, l.zxy );\n\n  //   x0 = x0 - 0.0 + 0.0 * C.xxx;\n  //   x1 = x0 - i1  + 1.0 * C.xxx;\n  //   x2 = x0 - i2  + 2.0 * C.xxx;\n  //   x3 = x0 - 1.0 + 3.0 * C.xxx;\n  vec3 x1 = x0 - i1 + C.xxx;\n  vec3 x2 = x0 - i2 + C.yyy; // 2.0*C.x = 1/3 = C.y\n  vec3 x3 = x0 - D.yyy;      // -1.0+3.0*C.x = -0.5 = -D.y\n\n// Permutations\n  i = mod289_0(i);\n  vec4 p = permute_0( permute_0( permute_0(\n             i.z + vec4(0.0, i1.z, i2.z, 1.0 ))\n           + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))\n           + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));\n\n// Gradients: 7x7 points over a square, mapped onto an octahedron.\n// The ring size 17*17 = 289 is close to a multiple of 49 (49*6 = 294)\n  float n_ = 0.142857142857; // 1.0/7.0\n  vec3  ns = n_ * D.wyz - D.xzx;\n\n  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);  //  mod(p,7*7)\n\n  vec4 x_ = floor(j * ns.z);\n  vec4 y_ = floor(j - 7.0 * x_ );    // mod(j,N)\n\n  vec4 x = x_ *ns.x + ns.yyyy;\n  vec4 y = y_ *ns.x + ns.yyyy;\n  vec4 h = 1.0 - abs(x) - abs(y);\n\n  vec4 b0 = vec4( x.xy, y.xy );\n  vec4 b1 = vec4( x.zw, y.zw );\n\n  //vec4 s0 = vec4(lessThan(b0,0.0))*2.0 - 1.0;\n  //vec4 s1 = vec4(lessThan(b1,0.0))*2.0 - 1.0;\n  vec4 s0 = floor(b0)*2.0 + 1.0;\n  vec4 s1 = floor(b1)*2.0 + 1.0;\n  vec4 sh = -step(h, vec4(0.0));\n\n  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;\n  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;\n\n  vec3 p0 = vec3(a0.xy,h.x);\n  vec3 p1 = vec3(a0.zw,h.y);\n  vec3 p2 = vec3(a1.xy,h.z);\n  vec3 p3 = vec3(a1.zw,h.w);\n\n//Normalise gradients\n  vec4 norm = taylorInvSqrt_0(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));\n  p0 *= norm.x;\n  p1 *= norm.y;\n  p2 *= norm.z;\n  p3 *= norm.w;\n\n// Mix final noise value\n  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);\n  m = m * m;\n  return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),\n                                dot(p2,x2), dot(p3,x3) ) );\n  }\n\nfloat grain(vec2 texCoord, vec2 resolution, float frame, float multiplier) {\n    vec2 mult = texCoord * resolution;\n    float offset = snoise(vec3(mult / multiplier, frame));\n    float n1 = pnoise(vec3(mult, offset), vec3(1.0/texCoord * resolution, 1.0));\n    return n1 / 2.0 + 0.5;\n}\n\nfloat grain(vec2 texCoord, vec2 resolution, float frame) {\n    return grain(texCoord, resolution, frame, 2.5);\n}\n\nfloat grain(vec2 texCoord, vec2 resolution) {\n    return grain(texCoord, resolution, 0.0);\n}\n\nvec3 blendSoftLight(vec3 base, vec3 blend) {\n    return mix(\n        sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend), \n        2.0 * base * blend + base * base * (1.0 - 2.0 * blend), \n        step(base, vec3(0.5))\n    );\n}\n\n// Using conditionals\n// vec3 blendSoftLight(vec3 base, vec3 blend) {\n//     return vec3(\n//         ((blend.r < 0.5) ? (2.0 * base.r * blend.r + base.r * base.r * (1.0 - 2.0 * blend.r)) : (sqrt(base.r) * (2.0 * blend.r - 1.0) + 2.0 * base.r * (1.0 - blend.r))),\n//         ((blend.g < 0.5) ? (2.0 * base.g * blend.g + base.g * base.g * (1.0 - 2.0 * blend.g)) : (sqrt(base.g) * (2.0 * blend.g - 1.0) + 2.0 * base.g * (1.0 - blend.g))),\n//         ((blend.b < 0.5) ? (2.0 * base.b * blend.b + base.b * base.b * (1.0 - 2.0 * blend.b)) : (sqrt(base.b) * (2.0 * blend.b - 1.0) + 2.0 * base.b * (1.0 - blend.b)))\n//     );\n// }\n\nuniform vec3 color1;\nuniform vec3 color2;\nuniform float aspect;\nuniform vec2 offset;\nuniform vec2 scale;\nuniform float noiseAlpha;\nuniform bool aspectCorrection;\nuniform float grainScale;\nuniform float grainTime;\nuniform vec2 smooth;\n\nvarying vec2 vUv;\n\nvoid main() {\n  vec2 q = vec2(vUv - 0.5);\n  if (aspectCorrection) {\n    q.x *= aspect;\n  }\n  q /= scale;\n  q -= offset;\n  float dst = length(q);\n  dst = smoothstep(smooth.x, smooth.y, dst);\n  vec3 color = mix(color1, color2, dst);\n  \n  if (noiseAlpha > 0.0 && grainScale > 0.0) {\n    float gSize = 1.0 / grainScale;\n    float g = grain(vUv, vec2(gSize * aspect, gSize), grainTime);\n    vec3 noiseColor = blendSoftLight(color, vec3(g));\n    gl_FragColor.rgb = mix(color, noiseColor, noiseAlpha);\n  } else {\n    gl_FragColor.rgb = color;\n  }\n  gl_FragColor.a = 1.0;\n}"])
 
 module.exports = createBackground
 function createBackground (opt) {
@@ -28929,7 +30344,7 @@ function createBackground (opt) {
   }
 }
 
-},{}],156:[function(require,module,exports){
+},{"glslify":15}],158:[function(require,module,exports){
 (function (global, factory) {
 	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
 	typeof define === 'function' && define.amd ? define(['exports'], factory) :
@@ -73994,7 +75409,7 @@ function createBackground (opt) {
 
 })));
 
-},{}],157:[function(require,module,exports){
+},{}],159:[function(require,module,exports){
 /**
  * @author qiao / https://github.com/qiao
  * @author mrdoob / http://mrdoob.com
@@ -75038,7 +76453,7 @@ Object.defineProperties( THREE.OrbitControls.prototype, {
 
 } );
 
-},{}],158:[function(require,module,exports){
+},{}],160:[function(require,module,exports){
 (function (global){
 
 /**
@@ -75109,7 +76524,7 @@ function config (name) {
 }
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],159:[function(require,module,exports){
+},{}],161:[function(require,module,exports){
 
 var zip = require('zip');
 
@@ -75127,7 +76542,7 @@ zip.workerScripts = {
 module.exports = zip;
 
 
-},{"zip":160}],160:[function(require,module,exports){
+},{"zip":162}],162:[function(require,module,exports){
 (function (global){
 ; var __browserify_shim_require__=require;(function browserifyShim(module, exports, require, define, browserify_shim__define__module__export__) {
 /*
@@ -76102,7 +77517,7 @@ module.exports = zip;
 }).call(global, undefined, undefined, undefined, undefined, function defineExport(ex) { module.exports = ex; });
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],161:[function(require,module,exports){
+},{}],163:[function(require,module,exports){
 const Detector = require('../lib/Detector');
 const Viewer = require('./viewer');
 const DropController = require('./drop-controller');
@@ -76225,7 +77640,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 });
 
-},{"../lib/Detector":2,"./drop-controller":162,"./validation-controller":163,"./viewer":164,"file-saver":13,"jszip":68,"query-string":136}],162:[function(require,module,exports){
+},{"../lib/Detector":2,"./drop-controller":164,"./validation-controller":165,"./viewer":166,"file-saver":14,"jszip":70,"query-string":138}],164:[function(require,module,exports){
 const EventEmitter = require('events');
 const zip = window.zip = require('zipjs-browserify');
 
@@ -76413,7 +77828,7 @@ class DropController extends EventEmitter {
 
 module.exports = DropController;
 
-},{"../lib/zip-fs":5,"events":12,"zipjs-browserify":159}],163:[function(require,module,exports){
+},{"../lib/zip-fs":6,"events":13,"zipjs-browserify":161}],165:[function(require,module,exports){
 const Handlebars = require('handlebars');
 
 const SEVERITY_MAP = ['Errors', 'Warnings', 'Infos', 'Hints'];
@@ -76499,7 +77914,7 @@ class ValidationController {
 
 module.exports = ValidationController;
 
-},{"handlebars":43}],164:[function(require,module,exports){
+},{"handlebars":45}],166:[function(require,module,exports){
 /* global dat */
 
 const THREE = window.THREE = require('three');
@@ -76511,9 +77926,20 @@ require('../lib/GLTFLoader');
 
 require('three/examples/js/controls/OrbitControls');
 
+require('../lib/GLTFExporter');
+
 const DEFAULT_CAMERA = '[default]';
 
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+
+  var link = document.createElement( 'a' );
+  link.style.display = 'none';
+
+  window.onload = function() {
+    document.body.appendChild( link ); // Firefox workaround, see #6594
+
+  }
 
 module.exports = class Viewer {
 
@@ -76526,6 +77952,8 @@ module.exports = class Viewer {
     this.clips = [];
     this.gui = null;
 
+    this.selectedItem = null;
+
     this.state = {
       environment: environments[1].name,
       background: false,
@@ -76535,6 +77963,28 @@ module.exports = class Viewer {
       wireframe: false,
       skeleton: false,
       grid: false,
+
+      rebuildGlTF: function(){
+        console.log("rebuild glTF");
+        if (this.selectedItem) {
+          this.removeTransformations(this.selectedItem);
+          this.removeNodes(this.selectedItem);
+          this.selectedItem = this.scene;
+        }
+        else{
+          console.log("Select an object before rebuilding");
+        }
+      }.bind(this), 
+
+      saveGlTF: function(){
+        console.log("save glTF");
+        if (this.selectedItem) {
+          this.exportGLTF(this.selectedItem);
+        }
+        else{
+          console.log("Select an object before saving");
+        }
+      }.bind(this), 
 
       // Lights
       addLights: true,
@@ -76561,10 +78011,10 @@ module.exports = class Viewer {
     this.renderer = window.renderer = new THREE.WebGLRenderer({antialias: true});
     this.renderer.gammaOutput = true;
     //this.renderer.setClearColor( 0xcccccc );
-	this.renderer.setClearColor (0xff0000, 1);
-	this.renderer.setClearColor( 0xFFFFFF );
-	
-	
+  this.renderer.setClearColor (0xff0000, 1);
+  this.renderer.setClearColor( 0xFFFFFF );
+  
+  
     this.renderer.setPixelRatio( window.devicePixelRatio );
     this.renderer.setSize( el.clientWidth, el.clientHeight );
 
@@ -76590,8 +78040,8 @@ module.exports = class Viewer {
     this.gridHelper = null;
     this.axesHelper = null;
 
-	
-	this.addLights();
+  
+  this.addLights();
     this.addGUI();
     if (options.kiosk) this.gui.close();
 
@@ -76631,6 +78081,95 @@ module.exports = class Viewer {
     this.renderer.setSize(clientWidth, clientHeight);
 
   }
+
+  removeTransformations( obj ){
+
+    obj.updateMatrixWorld(true);
+
+    obj.traverse(function(node){
+
+      if (node.isMesh){
+
+        var matrix = node.matrixWorld.clone();
+        node.geometry.applyMatrix(matrix);
+
+      }
+    })
+
+    obj.traverse(function(node){
+
+      node.position.set(0,0,0);
+      node.scale.set(1,1,1);
+      node.quaternion.set(0,0,0,1);
+      node.updateMatrix();
+
+    })
+
+
+
+  }
+
+  removeNodes ( obj ){
+
+    console.log("removeNodes");
+
+    obj.traverse(function(node){
+
+      if (node.isMesh){
+
+        this.scene.add(node);
+
+        //TODO: gerer le cas ou le mesh à lui aussi des enfant, il faudra faire attention à ne pas supprimé le mesh
+
+      }
+
+    }.bind(this));
+
+    this.scene.remove(obj);
+
+  }
+
+  saveString( text, filename ) {
+        this.save( new Blob( [ text ], { type: 'text/plain' } ), filename );
+  }
+  saveArrayBuffer( buffer, filename ) {
+        this.save( new Blob( [ buffer ], { type: 'application/octet-stream' } ), filename );
+  }
+
+  exportGLTF( input ) {
+    var gltfExporter = new THREE.GLTFExporter();
+    // var options = {
+    //   trs: document.getElementById('option_trs').checked,
+    //   onlyVisible: document.getElementById('option_visible').checked,
+    //   truncateDrawRange: document.getElementById('option_drawrange').checked,
+    //   binary: document.getElementById('option_binary').checked
+    // };
+    var options = {
+      trs: true,
+      onlyVisible: true,
+      truncateDrawRange: false,
+      binary: false
+    };
+
+    gltfExporter.parse( input, function( result ) {
+      if ( result instanceof ArrayBuffer ) {
+        this.saveArrayBuffer( result, 'scene.glb' );
+      } 
+      else {
+        var output = JSON.stringify( result, null, 2 );
+        console.log( output );
+        this.saveString( output, 'scene.gltf' );
+      }
+    }.bind(this), options );
+  }
+
+  save( blob, filename ) {
+        link.href = URL.createObjectURL( blob );
+        link.download = filename;
+        link.click();
+        // URL.revokeObjectURL( url ); breaks Firefox...
+  }
+
 
   load ( url, rootPath, assetMap ) {
  
@@ -76678,6 +78217,12 @@ module.exports = class Viewer {
 
           
         this.addContent(scene, clips);  
+
+
+        this.selectedItem = scene;
+
+        console.log(this.selectedItem);
+
           
         blobURLs.forEach(URL.revokeObjectURL);
 
@@ -77108,9 +78653,10 @@ module.exports = class Viewer {
 	
 	
 	
-
-
-
+    // Edition functions
+    const editionFolder = gui.addFolder('Edition');
+    editionFolder.add(this.state, 'rebuildGlTF');
+    editionFolder.add(this.state, 'saveGlTF');
 
 
     // AMBIENT Lighting controls.
@@ -77292,4 +78838,4 @@ envMapCtrl.onChange(() => this.updateEnvironment());
 
 };
 
-},{"../assets/environment/index":1,"../lib/GLTFLoader":3,"../lib/stats.min":4,"three":156,"three-vignette-background":155,"three/examples/js/controls/OrbitControls":157}]},{},[161]);
+},{"../assets/environment/index":1,"../lib/GLTFExporter":3,"../lib/GLTFLoader":4,"../lib/stats.min":5,"three":158,"three-vignette-background":157,"three/examples/js/controls/OrbitControls":159}]},{},[163]);

@@ -9,9 +9,20 @@ require('../lib/GLTFLoader');
 
 require('three/examples/js/controls/OrbitControls');
 
+require('../lib/GLTFExporter');
+
 const DEFAULT_CAMERA = '[default]';
 
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+
+  var link = document.createElement( 'a' );
+  link.style.display = 'none';
+
+  window.onload = function() {
+    document.body.appendChild( link ); // Firefox workaround, see #6594
+
+  }
 
 module.exports = class Viewer {
 
@@ -24,6 +35,8 @@ module.exports = class Viewer {
     this.clips = [];
     this.gui = null;
 
+    this.selectedItem = null;
+
     this.state = {
       environment: environments[1].name,
       background: false,
@@ -33,6 +46,28 @@ module.exports = class Viewer {
       wireframe: false,
       skeleton: false,
       grid: false,
+
+      rebuildGlTF: function(){
+        console.log("rebuild glTF");
+        if (this.selectedItem) {
+          this.removeTransformations(this.selectedItem);
+          this.removeNodes(this.selectedItem);
+          this.selectedItem = this.scene;
+        }
+        else{
+          console.log("Select an object before rebuilding");
+        }
+      }.bind(this), 
+
+      saveGlTF: function(){
+        console.log("save glTF");
+        if (this.selectedItem) {
+          this.exportGLTF(this.selectedItem);
+        }
+        else{
+          console.log("Select an object before saving");
+        }
+      }.bind(this), 
 
       // Lights
       addLights: true,
@@ -59,10 +94,10 @@ module.exports = class Viewer {
     this.renderer = window.renderer = new THREE.WebGLRenderer({antialias: true});
     this.renderer.gammaOutput = true;
     //this.renderer.setClearColor( 0xcccccc );
-	this.renderer.setClearColor (0xff0000, 1);
-	this.renderer.setClearColor( 0xFFFFFF );
-	
-	
+  this.renderer.setClearColor (0xff0000, 1);
+  this.renderer.setClearColor( 0xFFFFFF );
+  
+  
     this.renderer.setPixelRatio( window.devicePixelRatio );
     this.renderer.setSize( el.clientWidth, el.clientHeight );
 
@@ -88,8 +123,8 @@ module.exports = class Viewer {
     this.gridHelper = null;
     this.axesHelper = null;
 
-	
-	this.addLights();
+  
+  this.addLights();
     this.addGUI();
     if (options.kiosk) this.gui.close();
 
@@ -129,6 +164,95 @@ module.exports = class Viewer {
     this.renderer.setSize(clientWidth, clientHeight);
 
   }
+
+  removeTransformations( obj ){
+
+    obj.updateMatrixWorld(true);
+
+    obj.traverse(function(node){
+
+      if (node.isMesh){
+
+        var matrix = node.matrixWorld.clone();
+        node.geometry.applyMatrix(matrix);
+
+      }
+    })
+
+    obj.traverse(function(node){
+
+      node.position.set(0,0,0);
+      node.scale.set(1,1,1);
+      node.quaternion.set(0,0,0,1);
+      node.updateMatrix();
+
+    })
+
+
+
+  }
+
+  removeNodes ( obj ){
+
+    console.log("removeNodes");
+
+    obj.traverse(function(node){
+
+      if (node.isMesh){
+
+        this.scene.add(node);
+
+        //TODO: gerer le cas ou le mesh à lui aussi des enfant, il faudra faire attention à ne pas supprimé le mesh
+
+      }
+
+    }.bind(this));
+
+    this.scene.remove(obj);
+
+  }
+
+  saveString( text, filename ) {
+        this.save( new Blob( [ text ], { type: 'text/plain' } ), filename );
+  }
+  saveArrayBuffer( buffer, filename ) {
+        this.save( new Blob( [ buffer ], { type: 'application/octet-stream' } ), filename );
+  }
+
+  exportGLTF( input ) {
+    var gltfExporter = new THREE.GLTFExporter();
+    // var options = {
+    //   trs: document.getElementById('option_trs').checked,
+    //   onlyVisible: document.getElementById('option_visible').checked,
+    //   truncateDrawRange: document.getElementById('option_drawrange').checked,
+    //   binary: document.getElementById('option_binary').checked
+    // };
+    var options = {
+      trs: true,
+      onlyVisible: true,
+      truncateDrawRange: false,
+      binary: false
+    };
+
+    gltfExporter.parse( input, function( result ) {
+      if ( result instanceof ArrayBuffer ) {
+        this.saveArrayBuffer( result, 'scene.glb' );
+      } 
+      else {
+        var output = JSON.stringify( result, null, 2 );
+        console.log( output );
+        this.saveString( output, 'scene.gltf' );
+      }
+    }.bind(this), options );
+  }
+
+  save( blob, filename ) {
+        link.href = URL.createObjectURL( blob );
+        link.download = filename;
+        link.click();
+        // URL.revokeObjectURL( url ); breaks Firefox...
+  }
+
 
   load ( url, rootPath, assetMap ) {
  
@@ -176,6 +300,12 @@ module.exports = class Viewer {
 
           
         this.addContent(scene, clips);  
+
+
+        this.selectedItem = scene;
+
+        console.log(this.selectedItem);
+
           
         blobURLs.forEach(URL.revokeObjectURL);
 
@@ -606,9 +736,10 @@ module.exports = class Viewer {
 	
 	
 	
-
-
-
+    // Edition functions
+    const editionFolder = gui.addFolder('Edition');
+    editionFolder.add(this.state, 'rebuildGlTF');
+    editionFolder.add(this.state, 'saveGlTF');
 
 
     // AMBIENT Lighting controls.
