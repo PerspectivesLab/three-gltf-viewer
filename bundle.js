@@ -718,15 +718,12 @@ THREE.GLTFExporter.prototype = {
 						index: processTexture( material.metalnessMap )
 
 					};
-
 				}
 
 			} else {
 
 				gltfMaterial.pbrMetallicRoughness.metallicFactor = 0.5;
 				gltfMaterial.pbrMetallicRoughness.roughnessFactor = 0.5;
-
-
 
 			}
 
@@ -78126,6 +78123,12 @@ module.exports = class Viewer {
   }
 
   exportGLTF( input ) {
+
+    this.scene.remove(this.activeCamera);
+    this.scene.remove(this.mAmbientLight);
+    this.scene.remove(this.mHemisphereLight);
+    this.scene.remove(this.mDirectionalLight);
+
     var gltfExporter = new THREE.GLTFExporter();
     // var options = {
     //   trs: document.getElementById('option_trs').checked,
@@ -78147,11 +78150,14 @@ module.exports = class Viewer {
       } 
       else {
         var output = JSON.stringify( result, null, 2 );
-        console.log( output );
-        alert("pause");
         this.saveString( output, 'scene.gltf' );
       }
     }.bind(this), options );
+
+    this.scene.add(this.activeCamera);
+    this.scene.add(this.mAmbientLight);
+    this.scene.add(this.mHemisphereLight);
+    this.scene.add(this.mDirectionalLight);
   }
 
   save( blob, filename ) {
