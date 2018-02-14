@@ -231,7 +231,8 @@ module.exports = class Viewer {
       trs: true,
       onlyVisible: true,
       truncateDrawRange: false,
-      binary: false
+      binary: false,
+      embedImages: false,
     };
 
     gltfExporter.parse( input, function( result ) {
@@ -241,6 +242,7 @@ module.exports = class Viewer {
       else {
         var output = JSON.stringify( result, null, 2 );
         console.log( output );
+        alert("pause");
         this.saveString( output, 'scene.gltf' );
       }
     }.bind(this), options );
@@ -257,6 +259,11 @@ module.exports = class Viewer {
   load ( url, rootPath, assetMap ) {
  
     const baseURL = THREE.Loader.prototype.extractUrlBase(url);
+
+    console.log("viewer load");
+    console.log(baseURL);
+    console.log(url);
+    console.log(rootPath);
 
     // Load.
     return new Promise((resolve, reject) => {
@@ -638,7 +645,7 @@ module.exports = class Viewer {
         node.material.needsUpdate = true;
       }
       else {
-        console.log(node);
+        // console.log(node);
       }
     });
 
