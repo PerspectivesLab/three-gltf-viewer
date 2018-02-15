@@ -77950,6 +77950,8 @@ module.exports = class Viewer {
       skeleton: false,
       grid: false,
 
+      fileName: "myScene",
+
       rebuildGlTF: function(){
         console.log("rebuild glTF");
         if (this.selectedItem) {
@@ -78150,7 +78152,7 @@ module.exports = class Viewer {
       } 
       else {
         var output = JSON.stringify( result, null, 2 );
-        this.saveString( output, 'scene.gltf' );
+        this.saveString( output, this.state.fileName+'.gltf' );
       }
     }.bind(this), options );
 
@@ -78171,11 +78173,6 @@ module.exports = class Viewer {
   load ( url, rootPath, assetMap ) {
  
     const baseURL = THREE.Loader.prototype.extractUrlBase(url);
-
-    console.log("viewer load");
-    console.log(baseURL);
-    console.log(url);
-    console.log(rootPath);
 
     // Load.
     return new Promise((resolve, reject) => {
@@ -78655,8 +78652,9 @@ module.exports = class Viewer {
 	
 	
 	
-    // Edition functions
-    const editionFolder = gui.addFolder('Edition');
+    // Export functions
+    const editionFolder = gui.addFolder('Export settings');
+    editionFolder.add(this.state, 'fileName');
     editionFolder.add(this.state, 'rebuildGlTF');
     editionFolder.add(this.state, 'saveGlTF');
 
