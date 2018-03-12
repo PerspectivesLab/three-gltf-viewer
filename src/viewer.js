@@ -46,6 +46,7 @@ module.exports = class Viewer {
       wireframe: false,
       skeleton: false,
       grid: false,
+      screenshotMode: false,
 
       fileName: "myScene",
 
@@ -70,6 +71,11 @@ module.exports = class Viewer {
           console.log("Select an object before saving");
         }
       }.bind(this), 
+
+      //Dimensions
+      depth: 0,
+      height: 0,
+      length: 0,
 
       // Lights
       addLights: true,
@@ -107,11 +113,11 @@ module.exports = class Viewer {
     this.controls.autoRotate = false;
     this.controls.autoRotateSpeed = -10;
 
-    // this.background = createVignetteBackground({
-    //   aspect: this.defaultCamera.aspect,
-    //   grainScale: IS_IOS ? 0 : 0.001, // mattdesl/three-vignette-background#1
-    //   colors: ['#ffffff', '#353535']
-    // });
+    this.background = createVignetteBackground({
+      aspect: this.defaultCamera.aspect,
+      grainScale: IS_IOS ? 0 : 0.001, // mattdesl/three-vignette-background#1
+      colors: ['#ffffff', '#353535']
+    });
 
     this.el.appendChild(this.renderer.domElement);
 
@@ -125,8 +131,11 @@ module.exports = class Viewer {
     this.gridHelper = null;
     this.axesHelper = null;
 
+    this.lengthCtrl = null;
+    this.heightCtrl = null;
+    this.depthCtrl = null;
   
-  this.addLights();
+    this.addLights();
     this.addGUI();
     if (options.kiosk) this.gui.close();
 
@@ -639,7 +648,7 @@ module.exports = class Viewer {
         envMap.format = THREE.RGBFormat;
     }
 
-    if ((!envMap || !this.state.background) && this.activeCamera === this.defaultCamera) {
+    if ((!envMap || !this.state.background) && this.activeCamera === this.defaultCamera && !this.state.screenshotMode) {
       this.scene.add(this.background);
     } else {
       this.scene.remove(this.background);
@@ -745,6 +754,8 @@ module.exports = class Viewer {
     skeletonCtrl.onChange(() => this.updateDisplay());
     const gridCtrl = dispFolder.add(this.state, 'grid');
     gridCtrl.onChange(() => this.updateDisplay());
+    const screenshotModeCtrl = dispFolder.add(this.state, 'screenshotMode');
+    screenshotModeCtrl.onChange(() => this.updateEnvironment());
     dispFolder.add(this.controls, 'autoRotate');
 	
 	
@@ -754,6 +765,9 @@ module.exports = class Viewer {
     editionFolder.add(this.state, 'fileName');
     editionFolder.add(this.state, 'rebuildGlTF');
     editionFolder.add(this.state, 'saveGlTF');
+    this.depthCtrl = editionFolder.add(this.state, 'depth');
+    this.lengthCtrl = editionFolder.add(this.state, 'length');
+    this.heightCtrl = editionFolder.add(this.state, 'height');
 
 
     // AMBIENT Lighting controls.
@@ -925,6 +939,10 @@ envMapCtrl.onChange(() => this.updateEnvironment());
         this.animCtrls.push(ctrl);
       });
     }
+
+    this.state.depth = 100;
+    this.depthCtrl.updateDisplay();
+
   }
 
   clear () {
