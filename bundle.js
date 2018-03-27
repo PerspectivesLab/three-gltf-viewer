@@ -78021,13 +78021,19 @@ module.exports = class Viewer {
       rebuildGlTF: function(){
         console.log("rebuild glTF");
         if (this.selectedItem) {
+
+
           this.removeTransformations(this.selectedItem);
+
+
           this.removeNodes(this.selectedItem);
           this.selectedItem = this.scene;
         }
         else{
           console.log("Select an object before rebuilding");
         }
+
+
       }.bind(this), 
 
       saveGlTF: function(){
@@ -78146,6 +78152,8 @@ module.exports = class Viewer {
 
   removeTransformations( obj ){
 
+              console.log("removeTransformations");
+
     obj.updateMatrixWorld(true);
 
     obj.traverse(function(node){
@@ -78160,10 +78168,16 @@ module.exports = class Viewer {
 
     obj.traverse(function(node){
 
-      node.position.set(0,0,0);
-      node.scale.set(1,1,1);
-      node.quaternion.set(0,0,0,1);
-      node.updateMatrix();
+      if (node.isMesh){
+        node.position.set(0,0,0);
+        node.scale.set(1,1,1);
+        node.quaternion.set(0,0,0,1);
+        node.updateMatrix();
+      }
+      // else{
+      //   console.warn(node);
+      // }
+
 
     })
 
@@ -78178,6 +78192,8 @@ module.exports = class Viewer {
     obj.traverse(function(node){
 
       if (node.isMesh){
+
+        console.log(node);
 
         this.scene.add(node);
 
@@ -78204,6 +78220,7 @@ module.exports = class Viewer {
     this.scene.remove(this.mAmbientLight);
     this.scene.remove(this.mHemisphereLight);
     this.scene.remove(this.mDirectionalLight);
+    this.scene.remove(this.background);
 
     var gltfExporter = new THREE.GLTFExporter();
     // var options = {
